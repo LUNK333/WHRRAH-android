@@ -16,10 +16,20 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.WHRRAH">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Lets WHRRAH show up as a share target from RaceStudio3 Mobile
+                 (and anything else) "Share" sheets for .xrk session files -
+                 there's no "save to folder" export in RaceStudio3 Mobile,
+                 only app-to-app share, so this is how files get in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
     </application>

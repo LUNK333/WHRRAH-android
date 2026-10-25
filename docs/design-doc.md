@@ -36,7 +36,10 @@ written for a first-time Android dev.
 
 **Explicitly out of scope for v1** (desktop-only or later milestones):
 - Track Map widget (needs more GPS/map work — defer to v2).
-- The Data Wizard (gyro-correlation auto-sync between video and log folders).
+- The desktop Data Wizard's **batch folder-scanning** auto-match (point at a
+  folder of AiM sessions + a folder of videos, score every plausible
+  pairing). See §8 — Android gets a single-pair version of this instead,
+  scoped down for platform constraints, not deferred to v2.
 - Green-screen-only export, multi-lap selection UI, layout auto-load by
   filename convention.
 - Any Windows-DLL-based `.xrk` path — Android uses libxrk (Rust) instead,
@@ -160,8 +163,10 @@ precise per-widget time-offset sampling).
 7. **M6 — `.xrk` import wired into the real UI** (once M1's spike is proven,
    plug it into the same data model M0 built for CSV).
 
-Track map widget, Data Wizard, and green-screen mode are v2+ — explicitly
-deferred per §1.
+Track map widget and green-screen mode are v2+ — explicitly deferred per §1.
+The Data Wizard is **not** deferred — it gets a scoped-down mobile version,
+see §8 — fold that into M4 (sync) once M1/M2 are both in place, since it
+needs both a loaded XRK session and a loaded video.
 
 ## 6. Dev machine setup (assume zero prior Android experience)
 
@@ -239,3 +244,61 @@ is wired correctly.
 - Decide early whether layout JSON should aim for round-trip compatibility
   with desktop WHRRAH's layout files (shared layouts across platforms) or
   diverge freely — affects the data model design in M0/M3.
+
+## 8. Mobile Data Wizard: single-pair gyro sync (not the desktop batch model)
+
+Researched 2026-06-23. The desktop Data Wizard scans a folder of AiM
+sessions against a folder of videos and scores every plausible pairing
+(§0/README "Data Wizard" section, `WHRRAH.py` `video_gyro_signal` +
+surrounding match-scoring code). That model doesn't translate to Android:
+
+- **No WiFi access to the camera.** Researched whether the Osmo Action 4
+  exposes any WiFi HTTP API for file listing/download (the way GoPro's
+  cameras famously do, documented at
+  https://github.com/KonradIT/goprowifihack). It doesn't — DJI's own docs
+  confirm Osmo Action WiFi is exclusively for pairing with the DJI Mimo app,
+  no public/reverse-engineered protocol exists. `KonradIT/mmt`'s DJI
+  support (https://github.com/KonradIT/mmt) is USB-mass-storage-only
+  (`pkg/dji/dji.go` detects a mounted SD card partition, not a network
+  connection) — same as plugging in a cable, not a WiFi alternative.
+  **Confirmed:** downloading the full clip via the DJI Mimo app onto the
+  phone retains the embedded gyro metadata (`djmd` stream) — verified by
+  opening the downloaded file in Gyroflow. So gyro data survives the
+  "normal" no-Android-effort path of using Mimo to get the clip onto the
+  device; no need to solve WiFi-without-Mimo at all.
+- **No folder access to AiM's storage either.** RaceStudio3 Mobile is a
+  .NET MAUI app with no "save to folder" export — only an app-to-app
+  Android share action (confirmed by inspecting its installed package:
+  `mono.MonoRuntimeProvider` + `microsoft.maui.essentials.fileProvider`,
+  and its private storage is inaccessible without root since it isn't
+  debuggable). So there is no folder of `.xrk` files sitting on the device
+  to scan, the way desktop's Data Wizard expects — sessions arrive
+  one at a time, via Android's share sheet.
+- **Consequence:** there is no batch of files to fuzzy-match against. The
+  realistic mobile workflow is inherently a single video + single session,
+  arriving one at a time:
+  1. Download the clip off the camera via DJI Mimo (gyro metadata intact).
+  2. Load the video into WHRRAH (`Open Video…`, already implemented — M2).
+  3. Export/share the session from RaceStudio3 Mobile → WHRRAH now appears
+     in the Android share sheet as a target (`ACTION_SEND` intent filter,
+     already implemented — see `MainActivity.handleIncomingIntent`).
+  4. WHRRAH extracts the video's gyro signal and the session's rotation
+     signal and cross-correlates them (same math as desktop's
+     `video_gyro_signal` / `_decode_protobuf_fields` — that logic was
+     **hand-rolled by reverse-engineering DJI's `djmd` metadata stream's
+     schema-less protobuf framing**, not built on a third-party library;
+     confirmed by reading `WHRRAH.py` directly. `AdrianEddy/telemetry-parser`
+     (https://github.com/AdrianEddy/telemetry-parser), which supports DJI
+     Action 2/4/5/6 telemetry extraction, was *not* used for the desktop
+     version but is worth evaluating for the Android port instead of
+     reimplementing the protobuf walker from scratch in Kotlin/Rust).
+  5. Show a confidence score (same cross-correlation confidence concept as
+     desktop) and let the user confirm before locking in the offset — a
+     one-pair "does this look right?" check, not a ranked multi-candidate
+     table like desktop's results view.
+- This still needs Media3/`MediaExtractor` to demux the DJI metadata track
+  on Android (equivalent of desktop's `ffmpeg -map 0:2 -c copy -f data`),
+  and a Kotlin/Rust port of the quaternion → angular-velocity math. Natural
+  fit for the `xrk-ffi` Rust crate or a sibling one, since the
+  cross-correlation math is the same shape of problem already being solved
+  there for libxrk's `Channel` data.

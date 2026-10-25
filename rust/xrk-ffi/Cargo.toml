@@ -1,0 +1,20 @@
+[package]
+name = "xrk_ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "xrk_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Path dependency on a sibling checkout of https://github.com/m3rlin45/libxrk —
+# clone it next to WHRRAH-android (i.e. ../../../libxrk relative to this file)
+# before building. See ../../docs/design-doc.md §3.
+libxrk = { path = "../../../libxrk/crates/libxrk" }
+jni = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "unwind"

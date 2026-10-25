@@ -21,9 +21,9 @@ Hardware needed to start a workstream is listed as a dependency (`needs H2`).
 
 | ID | Task | Where | Status | Who |
 |---|---|---|---|---|
-| S1 | Commit the M0/M1/M2/canvas work in this repo (all of it is still uncommitted) | desk | TODO | |
+| S1 | Commit the M0/M1/M2/canvas work in this repo (all of it is still uncommitted) | desk | DONE | desk |
 | S2 | Create private GitHub repo `LUNK333/WHRRAH-android`, push | desk | TODO | |
-| S3 | In the desktop WHRRAH repo: commit `wifi_gyro_sync/` and push (only exists on the desktop right now) | desk | TODO | |
+| S3 | In the desktop WHRRAH repo: commit `wifi_gyro_sync/` and push (only exists on the desktop right now) | desk | DONE | desk |
 | S4 | Laptop: install Android Studio, clone this repo + `libxrk` sibling, open project, run on phone | laptop | TODO | |
 | S5 | Laptop: Rust + NDK + `cargo-ndk` (only if you'll rebuild `libxrk_ffi.so` there; prebuilt `.so` is checked in) | laptop | TODO | |
 | S6 | Put test data (sample `.mp4`, `.xrk`, CSV) in a synced folder (OneDrive/Drive) — not git | any | TODO | |
@@ -151,4 +151,5 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-25 · desk · S1, S3 · Committed all Android work locally (no remote yet — S2). Pushed `wifi_gyro_sync` to WHRRAH. Dropped 59.94 fps gyro task (out of scope: those recording formats have no gyro).
 - 2026-10-25 · desk · — · Board created from `WHRRAH android ver. development dashboard.xlsx`. Fixed `.gitignore` (was about to commit `app/build/` + 348 MB `rust/xrk-ffi/target/`).

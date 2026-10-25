@@ -19,23 +19,57 @@ The person commissioning this has **never built an Android app before**.
 Assume nothing about their toolchain familiarity; the setup section is
 written for a first-time Android dev.
 
+**Direction change (2026-10-25):** the app is no longer just a viewer for
+AiM logs. The goal is to **replace the AiM Solo entirely** — the phone
+becomes the data logger, fed by its own sensors, and does the video
+overlay/export on-device too. Think SoloStorm, not RaceRender. Sections
+below that assume AiM is the data source (§3 libxrk, §8 Data Wizard's
+RaceStudio share flow) are now secondary: `.xrk` import stays useful for
+testing against known-good AiM data, but it's not the main path.
+
 ## 1. Goal / non-goals
 
-**Goal (v1):** An Android app that can:
-1. Import a telemetry log (CSV first; `.xrk`/`.xrz` once the libxrk
-   integration below is working).
-2. Import a video clip from device storage.
-3. Place a small set of overlay widgets (Lap Timer, Numeric Display, Bar
-   Graph) on a canvas, positioned/scaled by touch.
-4. Scrub a synced preview (video + data, with a manual time-offset control).
-5. Export a composited MP4 (overlay burned into the source video) using
-   on-device hardware encoding — no bundled `ffmpeg` binary.
-6. Save/load a layout (JSON), schema-compatible in spirit with desktop
-   WHRRAH's layout files (field names can differ; exact byte-compatibility
-   is not a goal).
+**Goal:** a phone app that logs a track session from its own sensors and
+turns it into an overlaid video, with no AiM hardware in the car.
+
+Data sources (all over Bluetooth to the phone):
+- **RaceBox Mini** (BLE) — GPS position/speed + IMU. Replaces the Solo's
+  GPS; it's the basis for lap timing and the track map.
+- **ESP32 CAN listener** (BLE) — listen-only on the E46 PT-CAN; engine and
+  chassis channels (RPM, throttle, wheel speeds, steering, temps…).
+- **ELM327** (Bluetooth classic, EDIABAS) — brake pressure, which isn't on
+  the CAN bus.
+- **DJI Osmo Action 4** (BLE + WiFi) — gyro track for syncing video to
+  data, pulled over WiFi without downloading the video (see
+  `WHRRAH/wifi_gyro_sync/HANDOFF.md`).
+
+**v1 — logger + overlay:**
+1. Connect to all sources, show live status (connected, sample rate, last
+   seen) and record a session: every channel on one common timebase (phone
+   clock, anchored to GPS time).
+2. Lap timing from RaceBox GPS: start/finish (and optional split) lines,
+   saved per track; laps split automatically in the recorded session.
+3. Save sessions on-device; export them as CSV.
+4. Import the session's video (from DJI Mimo / device storage) and sync it
+   to the data by gyro cross-correlation, with a manual offset fallback.
+5. Overlay widgets (Lap Timer, Numeric Display, Bar Graph, Track Map) on a
+   canvas, positioned/scaled by touch; scrub a synced preview.
+6. Export a composited MP4 using on-device hardware encoding — no bundled
+   `ffmpeg` binary.
+7. Save/load overlay layouts (JSON), schema-compatible in spirit with
+   desktop WHRRAH's layout files (exact byte-compatibility is not a goal).
+
+**v2 — on-track features:**
+- Live in-car display: current/last/best lap, predictive delta, key
+  channels in big glanceable text.
+- Lap comparison (overlay two laps' traces/speed vs distance).
+- Track Map widget polish, auto track detection from GPS.
+
+**Still supported, but secondary:**
+- Importing AiM `.xrk`/`.xrz` (libxrk) and CSV logs — for testing the
+  overlay/export pipeline against known-good data and for old sessions.
 
 **Explicitly out of scope for v1** (desktop-only or later milestones):
-- Track Map widget (needs more GPS/map work — defer to v2).
 - The desktop Data Wizard's **batch folder-scanning** auto-match (point at a
   folder of AiM sessions + a folder of videos, score every plausible
   pairing). See §8 — Android gets a single-pair version of this instead,
@@ -75,7 +109,7 @@ written for a first-time Android dev.
   via `DataStore`, not `QSettings` (no equivalent — use the AndroidX
   Preferences DataStore).
 
-## 3. The libxrk integration (do this first — highest uncertainty)
+## 3. The libxrk integration (done as a spike in M1; now secondary — testing with AiM data only)
 
 Two viable approaches, in order of recommended effort:
 
@@ -163,10 +197,15 @@ precise per-widget time-offset sampling).
 7. **M6 — `.xrk` import wired into the real UI** (once M1's spike is proven,
    plug it into the same data model M0 built for CSV).
 
-Track map widget and green-screen mode are v2+ — explicitly deferred per §1.
-The Data Wizard is **not** deferred — it gets a scoped-down mobile version,
-see §8 — fold that into M4 (sync) once M1/M2 are both in place, since it
-needs both a loaded XRK session and a loaded video.
+Green-screen mode is v2+ — explicitly deferred per §1. The Track Map widget
+is now v1 (the RaceBox provides the GPS for it). The Data Wizard is **not**
+deferred — it gets a scoped-down mobile version, see §8 — fold that into M4
+(sync) once there's a session (own-logged, or `.xrk` for testing) and a
+video to match.
+
+These milestones cover the overlay/export half. The logger half (sensor
+connections, session recording, lap timing) is broken down in
+`docs/TASKS.md` workstreams B, I and L.
 
 ## 6. Dev machine setup (assume zero prior Android experience)
 
@@ -245,60 +284,69 @@ is wired correctly.
   with desktop WHRRAH's layout files (shared layouts across platforms) or
   diverge freely — affects the data model design in M0/M3.
 
-## 8. Mobile Data Wizard: single-pair gyro sync (not the desktop batch model)
+## 8. Mobile Data Wizard: gyro sync with the camera over WiFi
 
-Researched 2026-06-23. The desktop Data Wizard scans a folder of AiM
-sessions against a folder of videos and scores every plausible pairing
-(§0/README "Data Wizard" section, `WHRRAH.py` `video_gyro_signal` +
-surrounding match-scoring code). That model doesn't translate to Android:
+Updated 2026-10-25 (replaces the 2026-06-23 version, which concluded there
+was no WiFi access to the Osmo — that turned out to be wrong).
 
-- **No WiFi access to the camera.** Researched whether the Osmo Action 4
-  exposes any WiFi HTTP API for file listing/download (the way GoPro's
-  cameras famously do, documented at
-  https://github.com/KonradIT/goprowifihack). It doesn't — DJI's own docs
-  confirm Osmo Action WiFi is exclusively for pairing with the DJI Mimo app,
-  no public/reverse-engineered protocol exists. `KonradIT/mmt`'s DJI
-  support (https://github.com/KonradIT/mmt) is USB-mass-storage-only
-  (`pkg/dji/dji.go` detects a mounted SD card partition, not a network
-  connection) — same as plugging in a cable, not a WiFi alternative.
-  **Confirmed:** downloading the full clip via the DJI Mimo app onto the
-  phone retains the embedded gyro metadata (`djmd` stream) — verified by
-  opening the downloaded file in Gyroflow. So gyro data survives the
-  "normal" no-Android-effort path of using Mimo to get the clip onto the
-  device; no need to solve WiFi-without-Mimo at all.
-- **No folder access to AiM's storage either.** RaceStudio3 Mobile is a
-  .NET MAUI app with no "save to folder" export — only an app-to-app
-  Android share action (confirmed by inspecting its installed package:
-  `mono.MonoRuntimeProvider` + `microsoft.maui.essentials.fileProvider`,
-  and its private storage is inaccessible without root since it isn't
-  debuggable). So there is no folder of `.xrk` files sitting on the device
-  to scan, the way desktop's Data Wizard expects — sessions arrive
-  one at a time, via Android's share sheet.
-- **Consequence:** there is no batch of files to fuzzy-match against. The
-  realistic mobile workflow is inherently a single video + single session,
-  arriving one at a time:
-  1. Download the clip off the camera via DJI Mimo (gyro metadata intact).
-  2. Load the video into WHRRAH (`Open Video…`, already implemented — M2).
-  3. Export/share the session from RaceStudio3 Mobile → WHRRAH now appears
-     in the Android share sheet as a target (`ACTION_SEND` intent filter,
-     already implemented — see `MainActivity.handleIncomingIntent`).
-  4. WHRRAH extracts the video's gyro signal and the session's rotation
-     signal and cross-correlates them (same math as desktop's
-     `video_gyro_signal` / `_decode_protobuf_fields` — that logic was
-     **hand-rolled by reverse-engineering DJI's `djmd` metadata stream's
-     schema-less protobuf framing**, not built on a third-party library;
-     confirmed by reading `WHRRAH.py` directly. `AdrianEddy/telemetry-parser`
-     (https://github.com/AdrianEddy/telemetry-parser), which supports DJI
-     Action 2/4/5/6 telemetry extraction, was *not* used for the desktop
-     version but is worth evaluating for the Android port instead of
-     reimplementing the protobuf walker from scratch in Kotlin/Rust).
-  5. Show a confidence score (same cross-correlation confidence concept as
-     desktop) and let the user confirm before locking in the offset — a
-     one-pair "does this look right?" check, not a ranked multi-candidate
-     table like desktop's results view.
-- This still needs Media3/`MediaExtractor` to demux the DJI metadata track
-  on Android (equivalent of desktop's `ffmpeg -map 0:2 -c copy -f data`),
-  and a Kotlin/Rust port of the quaternion → angular-velocity math. Natural
-  fit for the `xrk-ffi` Rust crate or a sibling one, since the
-  cross-correlation math is the same shape of problem already being solved
-  there for libxrk's `Channel` data.
+The desktop Data Wizard matches a folder of AiM sessions against a folder
+of videos by gyro cross-correlation: `video_gyro_signal(path)` →
+telemetry_parser → one quaternion per frame → |angular velocity| →
+`correlate_signals()` against the log's yaw/roll/pitch-rate magnitude
+(20 Hz grid, 0.25 s steps). On Android the data side is now our own
+logged session, and the camera side can be read over WiFi.
+
+### Camera access (proven)
+
+The Osmo Action 4 **does** serve its files over WiFi — proven on a real
+camera in `WHRRAH/wifi_gyro_sync/` (full details in its `HANDOFF.md`;
+protocol reference is `osmosis/MEDIA_PROTOCOL.md`, and KonradIT/osmosis
+includes an Android app that implements the whole flow):
+
+1. **BLE** (GATT `fff5` write / `fff4` notify, DUML frames): pair, keepalive
+   ~1 Hz, read the camera AP's SSID + password.
+2. **Join the camera AP** (WPA2, 5 GHz, no internet, camera at
+   192.168.2.1). On Android: `WifiNetworkSpecifier` + bind the HTTP client
+   to that network, since it has no internet.
+3. **HTTP:** `GET http://192.168.2.1/v2?storage=<0 SD|1 internal>&path=DCIM/DJI_001/<name>.MP4`
+   — no auth, supports `Range`. File list comes over the UDP datalink.
+
+So **the gyro track can be pulled without downloading the video**: read
+`moov` (~6 requests, 1–2 MB), then range-read only the `djmd` sample per
+frame. The Python decoder matches telemetry_parser to within 1.2 ms per
+sample on 6 real clips. Open items: WiFi speed not yet measured (a full
+clip is 13k–24k requests), and reducing request count (multi-range,
+parallel connections, or correlating short windows instead of whole clips).
+
+Only some camera recording formats include the 1 kHz gyro block. Clips
+without it are out of scope for auto-sync — the app should detect that and
+fall back to the manual offset control.
+
+### Workflow
+
+1. Record a session with the app (RaceBox + ESP32 + ELM327). The RaceBox
+   IMU's angular rate is the data-side signal to correlate against.
+2. Connect to the camera, list clips, and pick candidates by time: the
+   camera's `mvhd` creation_time is real UTC (desktop WHRRAH wrongly treats
+   it as local time) and the session is anchored to GPS time, so overlapping
+   clips can be found without guessing.
+3. Fetch each candidate's gyro over WiFi, cross-correlate, show a
+   confidence score; the user confirms before the offset is locked in.
+   Because the phone now has both the session and the camera's file list,
+   matching several clips to one session is back on the table — a scoped
+   version of desktop's multi-pair matching, not just one pair.
+4. Get the video itself onto the phone for overlay/export: via DJI Mimo
+   (confirmed to keep the `djmd` gyro track intact) or a direct HTTP
+   download from the same endpoint (untested for speed).
+
+The decoder (`osmo_wifi_gyro.py`, ~400 lines, standard library only) was
+written to be ported; port it to Kotlin, or cross-compile telemetry_parser
+(Rust) alongside `xrk-ffi`. The same decoder also works on a local file,
+so already-downloaded clips use the same code path.
+
+### AiM sessions (testing only)
+
+Importing `.xrk` from RaceStudio3 Mobile still works via the Android share
+sheet (`ACTION_SEND`, see `MainActivity.handleIncomingIntent`) — RaceStudio3
+has no folder export, so sessions arrive one at a time. Kept for testing
+sync and overlay against known-good AiM data, not as the main path.

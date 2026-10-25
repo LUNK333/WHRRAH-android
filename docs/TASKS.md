@@ -27,7 +27,7 @@ Hardware needed to start a workstream is listed as a dependency (`needs H2`).
 | S4 | Laptop: install Android Studio, clone this repo + `libxrk` sibling, open project, run on phone | laptop | TODO | |
 | S5 | Laptop: Rust + NDK + `cargo-ndk` (only if you'll rebuild `libxrk_ffi.so` there; prebuilt `.so` is checked in) | laptop | TODO | |
 | S6 | Put test data (sample `.mp4`, `.xrk`, CSV) in a synced folder (OneDrive/Drive) — not git | any | TODO | |
-| S7 | Update design-doc §8: WiFi gyro fetch from the Osmo **does** work now (see `WHRRAH/wifi_gyro_sync/HANDOFF.md`) | any | TODO | |
+| S7 | Update design-doc §8: WiFi gyro fetch from the Osmo **does** work now (see `WHRRAH/wifi_gyro_sync/HANDOFF.md`) | any | DONE | desk |
 
 ## 1. Hardware
 
@@ -112,6 +112,18 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 | I5 | Recording test app: connect all sources, live channel list with rates + "last seen", record session | any | TODO | |
 | I6 | Car test: record a full session, check alignment against AiM + video | car | TODO | |
 
+## 3b. Logger: sessions + lap timing (replaces the AiM Solo)
+
+| ID | Task | Where | Status | Who |
+|---|---|---|---|---|
+| L1 | Session storage on device: list/rename/delete sessions, export CSV (same format the CSV importer reads) | any | TODO | |
+| L2 | Track definitions: start/finish line (+ optional splits) set on a map or by "drop line here" while parked on it; saved per track | any | TODO | |
+| L3 | Lap detection from RaceBox GPS: line-crossing with interpolation between fixes for sub-sample timing | any | TODO | |
+| L4 | Check lap times vs AiM Solo on the same session (run both in car once) | car | TODO | |
+| L5 | Keep logging alive with screen off / app in background (foreground service, wake lock, BLE reconnect) | any | TODO | |
+| L6 | v2: live in-car display — current/last/best lap, predictive delta | any | TODO | |
+| L7 | v2: lap comparison view | any | TODO | |
+
 ## 4. App core (existing milestones from design-doc §5)
 
 | ID | Task | Where | Status | Who |
@@ -130,7 +142,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 |---|---|---|---|---|
 | G1 | Inventory desktop WHRRAH widgets + their settings; pick v1 set for phone | any | TODO | |
 | G2 | Wireframe phone screens: session/source connect, live dashboard, editor, export | any | TODO | |
-| G3 | Port widgets: Lap Timer, Numeric, Bar Graph (v1), Data Trace, Track Map (v2) | any | TODO | |
+| G3 | Port widgets: Lap Timer, Numeric, Bar Graph, Track Map (v1); Data Trace (later) | any | TODO | |
 | G4 | Touch editing UX: select, drag, pinch-resize, snap, property sheet | any | TODO | |
 | G5 | Test on real phone; decide if tablet layout needed (Compose window size classes make this cheap later) | car | TODO | |
 | G6 | Live in-car display mode (big text, glanceable) — only if wanted | any | TODO | |
@@ -151,5 +163,6 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-25 · desk · S7 · Design doc: goal is now to replace the AiM Solo (phone logger + on-device overlay, SoloStorm-style); .xrk is testing-only. Rewrote §8 for WiFi camera access. Added workstream L (sessions + lap timing).
 - 2026-10-25 · desk · S1, S2, S3 · Committed all Android work, pushed to github.com/LUNK333/WHRRAH-android (branch `main`). Pushed `wifi_gyro_sync` to WHRRAH. Dropped 59.94 fps gyro task (out of scope: those recording formats have no gyro).
 - 2026-10-25 · desk · — · Board created from `WHRRAH android ver. development dashboard.xlsx`. Fixed `.gitignore` (was about to commit `app/build/` + 348 MB `rust/xrk-ffi/target/`).

@@ -364,19 +364,22 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     private fun onRecordState(rec: Boolean, secs: Int) {
         lastStatusElapsedMs = SystemClock.elapsedRealtime()
+        // The push that reports the stop already has the counter reset to 0, so keep the last value.
+        val clipS = if (!rec && secs == 0) recordTimeS else secs
         recordTimeS = secs
         recFlag = rec
         val was = recording
         recording = rec
         if (was == null || was == rec) return
         val backMs = if (rec) secs * 1000L else 0L
-        val e = RecordEvent(rec, System.currentTimeMillis() - backMs, SystemClock.elapsedRealtime() - backMs, secs)
+        val e = RecordEvent(rec, System.currentTimeMillis() - backMs, SystemClock.elapsedRealtime() - backMs, clipS)
         recordEvents.add(0, e)
-        logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $secs s")
-        if (testRunning) mark(if (rec) "camera reports recording" else "camera reports stopped (${secs} s clip)")
+        logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $clipS s")
+        if (testRunning) mark(if (rec) "camera reports recording" else "camera reports stopped (${clipS} s clip)")
         onRecordingChanged?.invoke(e)
-        // The new clip only shows up in a fresh listing; give the camera a moment to finalize it.
-        if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 5000)
+        // The new clip only shows up in a fresh listing. The listing doesn't ask for files until ~10 s
+        // in (link + registration), and an early empty answer is retried, so only a short pause here.
+        if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 2000)
     }
 
     // ---- record → refresh loop test -----------------------------------------------------------
@@ -387,6 +390,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     val testMarks = mutableStateListOf<TestMark>()
     var testRunning by mutableStateOf(false); private set
     @Volatile private var testT0 = 0L
+    /** Bumped per run so a previous run's timeout can't end a later one. */
+    @Volatile private var testGen = 0
     @Volatile private var recFlag: Boolean? = null
 
     /**
@@ -397,6 +402,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         val s = session ?: return logLine("test: no live datalink — list clips first")
         if (testRunning) return
         testRunning = true
+        val gen = ++testGen
         testMarks.clear()
         testT0 = SystemClock.elapsedRealtime()
         mark("test started")
@@ -428,7 +434,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
             mark("stop-record command → " + (r2?.let { replyName(it) } ?: "no reply"))
             if (!waitFor(false, 10_000)) return@Thread endTest("camera never reported the stop")
             // From here the normal flow takes over (auto-refresh after a stop); listing marks itself.
-            main.postDelayed({ if (testRunning) endTest("gave up: no new clip within 90 s of the stop") }, 90_000)
+            main.postDelayed({ if (testRunning && testGen == gen) endTest("gave up: no new clip within 90 s of the stop") }, 90_000)
         }.apply { isDaemon = true }.start()
     }
 

@@ -303,8 +303,10 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     // ---- file list (B1e) ----------------------------------------------------------------------
 
-    fun listFiles() {
-        setPhase(Phase.LISTING, "Reading the camera's file list…")
+    fun listFiles() = listFiles(1)
+
+    private fun listFiles(attempt: Int) {
+        setPhase(Phase.LISTING, if (attempt == 1) "Reading the camera's file list…" else "Re-reading the file list (try $attempt)…")
         Thread {
             session?.close()
             // Action 4 = udp/9004 after a tcp/7001 poke; Action 5 Pro = udp/10004, no poke.
@@ -326,11 +328,21 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 .map { it.copy(storage = resolveStorage(it)) }
                 .sortedWith(compareByDescending<CameraFile> { it.timestamp }.thenByDescending { it.seq })
             main.post {
+                // Right after a recording the camera can refuse playback while it saves the clip, and
+                // the list comes back empty. Keep the old list and ask again rather than wiping it.
+                if (videos.isEmpty() && files.isNotEmpty()) {
+                    if (attempt < LIST_ATTEMPTS) {
+                        logLine("camera returned an empty list (probably still saving) — retrying in 4 s")
+                        setPhase(Phase.READY, "Camera busy — retrying the file list…")
+                        main.postDelayed({ if (phase == Phase.READY) listFiles(attempt + 1) }, 4000)
+                    } else setPhase(Phase.READY, "Camera returned an empty list — showing the last one; tap Refresh list")
+                    return@post
+                }
                 // New = not in the previous listing of this camera (saved, so it spans app restarts).
                 val key = "seen_${address ?: "?"}"
                 val seen = prefs.getStringSet(key, null)
                 newPaths = if (seen == null) emptySet() else videos.map { it.path }.filter { it !in seen }.toSet()
-                prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
+                if (videos.isNotEmpty()) prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
                 files.clear(); files.addAll(videos)
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
             }
@@ -353,7 +365,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $secs s")
         onRecordingChanged?.invoke(e)
         // The new clip only shows up in a fresh listing; give the camera a moment to finalize it.
-        if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 3000)
+        if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 5000)
     }
 
     private val storageForBit = HashMap<Int, Int>()
@@ -473,6 +485,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     companion object {
         const val IP = "192.168.2.1"
+        private const val LIST_ATTEMPTS = 4
 
         @Volatile private var instance: OsmoLink? = null
         fun get(context: Context): OsmoLink =

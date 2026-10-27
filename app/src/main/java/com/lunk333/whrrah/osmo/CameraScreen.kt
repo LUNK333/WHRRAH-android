@@ -79,7 +79,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var windowSec by remember { mutableStateOf<Int?>(60) }
     var parallel by remember { mutableStateOf(4) }
     var password by remember { mutableStateOf("") }
-    var showLog by remember { mutableStateOf(true) }
+    var showLog by remember { mutableStateOf(false) }
 
     val pickLocal = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) link.decodeLocalGyro(uri, displayName(context, uri))

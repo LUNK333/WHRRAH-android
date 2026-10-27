@@ -85,6 +85,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     var ssid by mutableStateOf<String?>(null); private set
     val found = mutableStateListOf<Found>()
     val files = mutableStateListOf<CameraFile>()
+    /** Paths in [files] that weren't in the previous listing of this camera. */
+    var newPaths by mutableStateOf<Set<String>>(emptySet()); private set
     val log = mutableStateListOf<String>()
     var gyroBusy by mutableStateOf(false); private set
     var gyroProgress by mutableStateOf(0f); private set
@@ -324,6 +326,11 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 .map { it.copy(storage = resolveStorage(it)) }
                 .sortedWith(compareByDescending<CameraFile> { it.timestamp }.thenByDescending { it.seq })
             main.post {
+                // New = not in the previous listing of this camera (saved, so it spans app restarts).
+                val key = "seen_${address ?: "?"}"
+                val seen = prefs.getStringSet(key, null)
+                newPaths = if (seen == null) emptySet() else videos.map { it.path }.filter { it !in seen }.toSet()
+                prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
                 files.clear(); files.addAll(videos)
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
             }

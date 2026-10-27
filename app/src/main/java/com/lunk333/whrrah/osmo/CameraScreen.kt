@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -178,9 +179,13 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             item { Text("Videos on camera (newest first)", style = MaterialTheme.typography.titleSmall) }
             items(link.files, key = { "${it.storage}:${it.path}" }) { f ->
                 val isSel = selected?.path == f.path
-                Card(Modifier.fillMaxWidth().clickable { selected = f }) {
+                val isNew = f.path in link.newPaths
+                Card(
+                    Modifier.fillMaxWidth().clickable { selected = f },
+                    colors = if (isNew) CardDefaults.cardColors(containerColor = Color(0x6643A047)) else CardDefaults.cardColors(),
+                ) {
                     Column(Modifier.padding(10.dp)) {
-                        Text((if (isSel) "▶ " else "") + f.name, style = MaterialTheme.typography.bodyMedium)
+                        Text((if (isSel) "▶ " else "") + (if (isNew) "NEW · " else "") + f.name, style = MaterialTheme.typography.bodyMedium)
                         Text(listOfNotNull(f.dateTaken.ifEmpty { null }, f.durationSec.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60, it % 60) },
                             f.resolution, f.resLabel, f.sizeBytes.takeIf { it > 0 }?.let { "%.1f GB".format(it / 1e9) },
                             if (f.storage == 1) "internal" else "SD").joinToString(" · "), style = MaterialTheme.typography.bodySmall)

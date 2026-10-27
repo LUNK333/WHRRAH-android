@@ -109,6 +109,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 val last = link.lastCamera
                 if (last != null && link.phase !in setOf(OsmoLink.Phase.READY, OsmoLink.Phase.SCANNING) && !busy)
                     Button(onClick = { link.connect(last.address, last.name) }) { Text("Reconnect ${last.name}") }
+                if (link.phase == OsmoLink.Phase.READY) Button(onClick = link::listFiles) { Text("Refresh list") }
                 if (link.phase != OsmoLink.Phase.IDLE) OutlinedButton(onClick = { selected = null; link.disconnect() }) { Text("Disconnect") }
             }
         }

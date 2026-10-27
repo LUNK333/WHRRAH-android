@@ -345,6 +345,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         recordEvents.add(0, e)
         logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $secs s")
         onRecordingChanged?.invoke(e)
+        // The new clip only shows up in a fresh listing; give the camera a moment to finalize it.
+        if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 3000)
     }
 
     private val storageForBit = HashMap<Int, Int>()

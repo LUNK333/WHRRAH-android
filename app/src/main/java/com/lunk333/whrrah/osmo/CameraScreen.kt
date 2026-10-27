@@ -65,7 +65,7 @@ import kotlin.math.min
 fun CameraScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val link = remember { OsmoLink.get(context) }
-    val monitor = link.monitor
+    val monitor = remember { RecordingMonitor.get(context) }
 
     val perms = remember {
         if (Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -89,7 +89,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         OsmoLink.Phase.READING_WIFI, OsmoLink.Phase.JOINING_WIFI, OsmoLink.Phase.LISTING)
 
     LazyColumn(modifier = modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { RecordingCard(monitor) }
+        item { RecordingCard(monitor, link.lastCamera, hasPerms) }
         item {
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Column(Modifier.padding(12.dp)) {
@@ -111,13 +111,6 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 if (last != null && link.phase !in setOf(OsmoLink.Phase.READY, OsmoLink.Phase.SCANNING) && !busy)
                     Button(onClick = { link.connect(last.address, last.name) }) { Text("Reconnect ${last.name}") }
                 if (link.phase != OsmoLink.Phase.IDLE) OutlinedButton(onClick = { selected = null; link.disconnect() }) { Text("Disconnect") }
-            }
-        }
-
-        // WiFi is on demand: the BLE link (and the REC monitor) stays up either way.
-        if (link.phase == OsmoLink.Phase.CONNECTED || link.phase == OsmoLink.Phase.READY) item {
-            Button(onClick = link::startWifi, enabled = !busy) {
-                Text(if (link.wifiUp) "Refresh clip list" else "WiFi: list clips")
             }
         }
 
@@ -247,7 +240,7 @@ private fun displayName(context: android.content.Context, uri: Uri): String =
 
 /** Is the camera recording? Big REC light driven by [RecordingMonitor] (BLE R-SDK status pushes). */
 @Composable
-private fun RecordingCard(monitor: RecordingMonitor) {
+private fun RecordingCard(monitor: RecordingMonitor, camera: OsmoLink.Found?, hasPerms: Boolean) {
     // Tick so "no status for N s" and the age readout stay current between pushes.
     var now by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(Unit) { while (true) { delay(500); now = SystemClock.elapsedRealtime() } }
@@ -257,7 +250,7 @@ private fun RecordingCard(monitor: RecordingMonitor) {
     val stale = connected && (ageS == null || ageS > 4)
     val rec = monitor.recording == true && !stale
     val (light, label) = when {
-        !connected -> Color.Gray to (if (monitor.state == RecordingMonitor.State.WAITING_APPROVAL) "Connecting…" else "Not connected")
+        !connected -> Color.Gray to "Not monitoring"
         stale -> Color(0xFFE0A000) to "No status from camera"
         monitor.recording == null -> Color.Gray to "Waiting for status…"
         rec -> Color(0xFFE53935) to "REC  %d:%02d".format(monitor.recordTimeS / 60, monitor.recordTimeS % 60)
@@ -274,6 +267,13 @@ private fun RecordingCard(monitor: RecordingMonitor) {
                 ageS?.let { "updated %.1f s ago".format(it) }).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             if (monitor.message.isNotEmpty() && monitor.state != RecordingMonitor.State.CONNECTED)
                 Text(monitor.message, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (monitor.state == RecordingMonitor.State.OFF || monitor.state == RecordingMonitor.State.FAILED) {
+                    Button(onClick = { camera?.let { monitor.start(it.address) } }, enabled = camera != null && hasPerms) {
+                        Text(camera?.let { "Monitor ${it.name}" } ?: "Scan & connect once first")
+                    }
+                } else OutlinedButton(onClick = monitor::stop) { Text("Stop monitoring") }
+            }
             val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
             monitor.events.take(4).forEach { e ->
                 Text((if (e.started) "● started " else "■ stopped ") + fmt.format(Date(e.wallMs)) +

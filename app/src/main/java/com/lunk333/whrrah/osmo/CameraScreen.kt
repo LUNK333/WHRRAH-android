@@ -267,10 +267,16 @@ private fun RecordingCard(link: OsmoLink) {
             }
             ageS?.let { Text("updated %.1f s ago".format(it), style = MaterialTheme.typography.bodySmall) }
             val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
-            OutlinedButton(
-                onClick = { link.runRecordLoopTest(10) },
-                enabled = link.phase == OsmoLink.Phase.READY && link.recording == false && !link.testRunning,
-            ) { Text(if (link.testRunning) "Testing…" else "Test: record 10 s → refresh") }
+            val canTest = link.phase == OsmoLink.Phase.READY && link.recording == false && !link.testRunning
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { link.runRecordLoopTest(10) }, enabled = canTest) {
+                    Text(if (link.testRunning) "Testing…" else "Test 10 s")
+                }
+                // An autocross run is ~2 min: checks finalize/refresh after a longer write, and a full-clip gyro pull.
+                OutlinedButton(onClick = { link.runRecordLoopTest(120, fetchGyroAfter = true) }, enabled = canTest) {
+                    Text("Test 2 min + gyro")
+                }
+            }
             link.testMarks.forEach { m ->
                 Text("+%5.1f s  %s".format(m.tS, m.what), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 13.sp)
             }

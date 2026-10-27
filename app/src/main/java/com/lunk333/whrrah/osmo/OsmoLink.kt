@@ -348,7 +348,13 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 if (videos.isNotEmpty()) prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
                 files.clear(); files.addAll(videos)
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
-                if (testRunning && newPaths.isNotEmpty()) endTest("new clip listed: ${videos.first { it.path in newPaths }.name} — done")
+                if (testRunning && newPaths.isNotEmpty()) {
+                    val clip = videos.first { it.path in newPaths }
+                    if (testFetchGyro) {
+                        mark("new clip listed: ${clip.name} — fetching its whole gyro track")
+                        fetchCameraGyro(clip, null, 4)
+                    } else endTest("new clip listed: ${clip.name} — done")
+                }
                 else if (testRunning) mark("list done, ${videos.size} clips, nothing new yet")
             }
         }.start()
@@ -398,10 +404,14 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
      * Start recording over WiFi, record [recordSeconds], stop, then let the normal auto-refresh run,
      * timestamping every step until the new clip shows up in the list — to see where the time goes.
      */
-    fun runRecordLoopTest(recordSeconds: Int = 10) {
+    /** Also pull the new clip's whole gyro track at the end of the loop test. */
+    @Volatile private var testFetchGyro = false
+
+    fun runRecordLoopTest(recordSeconds: Int = 10, fetchGyroAfter: Boolean = false) {
         val s = session ?: return logLine("test: no live datalink — list clips first")
         if (testRunning) return
         testRunning = true
+        testFetchGyro = fetchGyroAfter
         val gen = ++testGen
         testMarks.clear()
         testT0 = SystemClock.elapsedRealtime()
@@ -518,7 +528,12 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                         "%.1f MB, %d requests in %.1f s = %.1f ms/request".format(
                             g.track.bytesRead / 1e6, g.track.requests, g.seconds, g.msPerRequest))
                     if (g.samples.size == 0) logLine("gyro: no 1 kHz IMU data in this clip — its recording format doesn't carry gyro")
-                }.onFailure { logLine("gyro failed: ${it.javaClass.simpleName}: ${it.message}") }
+                    if (testRunning && testFetchGyro) endTest("gyro: %d samples, %d requests in %.1f s (%.1f ms/request) — done".format(
+                        g.samples.size, g.track.requests, g.seconds, g.msPerRequest))
+                }.onFailure {
+                    logLine("gyro failed: ${it.javaClass.simpleName}: ${it.message}")
+                    if (testRunning && testFetchGyro) endTest("gyro fetch failed: ${it.message}")
+                }
             }
         }.start()
     }

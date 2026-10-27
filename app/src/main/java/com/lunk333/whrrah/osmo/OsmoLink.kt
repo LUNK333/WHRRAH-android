@@ -58,7 +58,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The protocol work is vendored from osmosis (`dev.konraditurbe.osmosis`, MIT), whose sequence and
  * timings come from HCI snoops of DJI Mimo and were proven on an Action 4. This class only drives it.
- * The BLE link normally drops once the WiFi side comes up; that's expected.
+ * The BLE link stays up the whole time (and reconnects if it drops): it also carries
+ * [RecordingMonitor]'s R-SDK status, so "is the camera recording" works while clips are fetched.
  *
  * One instance per process ([get]) so a screen rotation doesn't tear the camera session down.
  * State is Compose snapshot state, written only on the main thread.
@@ -66,7 +67,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 @SuppressLint("MissingPermission")
 class OsmoLink private constructor(private val context: Context) : GattClient.Listener, ApJoiner.Listener {
 
-    enum class Phase { IDLE, SCANNING, CONNECTING, PAIRING, APPROVE_ON_CAMERA, READING_WIFI, NEED_PASSWORD, JOINING_WIFI, LISTING, READY, FAILED }
+    enum class Phase { IDLE, SCANNING, CONNECTING, CONNECTED, PAIRING, APPROVE_ON_CAMERA, READING_WIFI, NEED_PASSWORD, JOINING_WIFI, LISTING, READY, FAILED }
 
     data class Found(val name: String, val address: String, val rssi: Int)
 
@@ -102,6 +103,14 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     private var paired = false
     private var joinStarted = false
     private val gyroCancel = AtomicBoolean(false)
+    /** User wants the camera link up: reconnect BLE whenever it drops. */
+    private var wantLink = false
+    private var gattReady = false
+    private var wifiRequested = false
+    var wifiUp by mutableStateOf(false); private set
+
+    /** Recording state over the same BLE link (R-SDK frames, start byte 0xAA). */
+    val monitor = RecordingMonitor(main, prefs, { gatt?.writeCommand(it) ?: false }, ::logLine)
 
     // ---- scan --------------------------------------------------------------------------------
 
@@ -151,34 +160,65 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     fun connect(addr: String, name: String?) {
         stopScan()
         disconnect()
-        RecordingMonitor.get(context).stop()   // one BLE link to the camera at a time
+        address = addr
+        prefs.edit().putString("last_addr", addr).putString("last_name", name).apply()
+        password = prefs.getString("pass_$addr", null)
+        joinStarted = false
+        ssid = name
+        wantLink = true
+        setPhase(Phase.CONNECTING, "Connecting to $addr over BLE…")
+        openGatt()
+    }
+
+    private fun openGatt() {
+        val addr = address ?: return
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
             ?: return fail("Bluetooth unavailable")
-        address = addr
-        prefs.edit().putString("last_addr", addr).apply()
-        password = prefs.getString("pass_$addr", null)
-        pairStatus = -1; paired = false; joinStarted = false
-        ssid = name
-        prefs.edit().putString("last_name", name).apply()
-        setPhase(Phase.CONNECTING, "Connecting to $addr over BLE…")
+        pairStatus = -1; paired = false; gattReady = false
         gatt = GattClient(context, this).also { it.connect(adapter.getRemoteDevice(addr)) }
     }
 
+    private val reconnect = Runnable { if (wantLink && gatt == null) { logLine("BLE: reconnecting…"); openGatt() } }
+
     override fun onReady(gatt: GattClient) { main.post {
-        setPhase(Phase.PAIRING, "BLE connected — pairing…")
+        gattReady = true
+        if (!wifiUp && phase == Phase.CONNECTING) setPhase(Phase.CONNECTED, "Connected over BLE")
+        monitor.begin()
+        // Space the DUML writes away from the R-SDK request (back-to-back fff5 writes drop).
+        if (wifiRequested && !wifiUp) main.postDelayed({ startPairing() }, 400)
+    } }
+
+    /** Wake the camera's WiFi, join it and list clips. Safe to call again to refresh the list. */
+    fun startWifi() {
+        wifiRequested = true
+        when {
+            wifiUp -> listFiles()
+            gattReady -> startPairing()
+            else -> logLine("WiFi: waiting for the BLE link first")
+        }
+    }
+
+    private fun startPairing() {
+        setPhase(Phase.PAIRING, "Pairing for WiFi…")
+        if (paired) return onPaired()   // already paired on this BLE link: just wake the AP again
         // Mimo's order: session wake first, pairing a beat later (back-to-back fff5 writes drop).
-        gatt.writeCommand(OsmoCommands.sessionPing(OsmoCommands.SESSION_WAKE))
+        gatt?.writeCommand(OsmoCommands.sessionPing(OsmoCommands.SESSION_WAKE))
         main.postDelayed({ sendPair() }, 120)
         for (delay in longArrayOf(2500, 5000)) main.postDelayed({
             if (pairStatus == -1 && !paired && this.gatt != null) { logLine("no pairing reply yet — re-sending"); sendPair() }
         }, delay)
-    } }
+    }
 
     private fun sendPair() {
         gatt?.writeCommand(OsmoCommands.setPairingPin("osmo", identifier = DjiPairMessagePayload.DEFAULT_IDENTIFIER))
     }
 
     override fun onNotification(sourceChar: UUID, raw: ByteArray, parsed: DjiMessage?) {
+        if (raw.isNotEmpty() && (raw[0].toInt() and 0xFF) == 0xAA) {
+            val copy = raw.copyOf()
+            main.post { monitor.onFrame(copy) }
+            return
+        }
         parsed ?: return
         // The camera sends some messages as REQUESTS (flags 0x40) and drops the link if they go
         // unanswered: reply with flags 0xC0, swapped target, echoed id. Device-info gets our "APP" blob.
@@ -215,7 +255,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     }
 
     private fun onPaired() {
-        if (paired) return
+        if (paired && phase != Phase.PAIRING) return
         paired = true
         setPhase(Phase.READING_WIFI, "Paired — waking the camera's WiFi…")
         // Post-pair sequence and spacing from the Mimo snoop: 0x53/0x10 (the actual wake), then creds.
@@ -247,8 +287,11 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onDisconnected() { main.post {
         logLine("BLE disconnected")
         gatt?.close(); gatt = null
-        // Dropping BLE after the WiFi handoff is normal; before it, the connect failed.
-        if (!joinStarted && phase != Phase.FAILED && phase != Phase.IDLE) fail("BLE link dropped before WiFi came up — try again")
+        gattReady = false; paired = false; pairStatus = -1
+        monitor.linkDown()
+        if (!wantLink) return@post
+        if (!wifiUp && phase != Phase.FAILED) setPhase(Phase.CONNECTING, "BLE link dropped — reconnecting…")
+        main.postDelayed(reconnect, 3000)
     } }
 
     // ---- WiFi join (B1d) ----------------------------------------------------------------------
@@ -266,7 +309,6 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     override fun onNetwork(network: Network, link: LinkProperties?) { main.post {
         logLine("WiFi up: ${link?.linkAddresses?.joinToString() ?: "?"}")
-        gatt?.disconnect()   // done with BLE; the camera expects the handoff
         // ApJoiner binds the process to the camera network. A non-bypassable VPN (e.g. AdGuard)
         // refuses that bind, and every request then leaks out the VPN and never reaches the camera.
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -277,6 +319,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 else "Android wouldn't route the app over the camera WiFi — reconnect"
             )
         }
+        wifiUp = true
         listFiles()
     } }
 
@@ -285,7 +328,12 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onLost() { main.post {
         logLine("camera WiFi lost")
         session?.close(); session = null
-        if (phase != Phase.IDLE) fail("Camera WiFi dropped (camera asleep or out of range) — reconnect")
+        wifiUp = false; joinStarted = false; wifiRequested = false
+        ap?.release(); ap = null
+        files.clear()
+        if (phase == Phase.IDLE) return@post
+        if (gattReady) setPhase(Phase.CONNECTED, "Camera WiFi went to sleep — BLE still connected; tap WiFi to wake it")
+        else fail("Camera WiFi dropped (camera asleep or out of range) — reconnect")
     } }
 
     // ---- file list (B1e) ----------------------------------------------------------------------
@@ -304,8 +352,11 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 list = runCatching { s.fetchFileList(IP) }.getOrElse { logLine("list error: ${it.message}"); emptyList() }
             }
             if (!s.handshakeOk) { s.close(); main.post { fail("Camera didn't answer the file-list request") }; return@Thread }
-            s.startKeepAlive()   // holds the AP up between actions
-            session = s
+            // Listing puts the camera in playback mode, and it can't record in playback. Close the
+            // datalink (which releases playback) so the remotes can still start recording; the gyro
+            // fetch is plain HTTP and doesn't need it.
+            s.close()
+            logLine("released playback mode so the camera can record")
             val videos = list.filter { it.ext == "MP4" || it.ext == "MOV" }
                 .map { it.copy(storage = resolveStorage(it)) }
                 .sortedWith(compareByDescending<CameraFile> { it.timestamp }.thenByDescending { it.seq })
@@ -400,6 +451,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     // ---- teardown / util ----------------------------------------------------------------------
 
     fun disconnect() {
+        wantLink = false; wifiRequested = false; wifiUp = false; gattReady = false
+        monitor.reset()
         main.removeCallbacksAndMessages(null)
         gyroCancel.set(true)
         session?.let { s -> Thread { runCatching { s.close() } }.start() }

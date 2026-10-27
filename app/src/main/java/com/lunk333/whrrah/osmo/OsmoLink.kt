@@ -107,6 +107,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     val recordEvents = mutableStateListOf<RecordEvent>()
     /** Fires on the main thread on every recording start/stop — the cue for session logging. */
     var onRecordingChanged: ((RecordEvent) -> Unit)? = null
+    /** Fires on the main thread after each successful listing: (videos newest first, paths new since the last listing). */
+    var onFilesListed: ((List<CameraFile>, Set<String>) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     private val prefs = context.getSharedPreferences("osmo", Context.MODE_PRIVATE)
@@ -349,6 +351,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 newPaths = if (seen == null) emptySet() else videos.map { it.path }.filter { it !in seen }.toSet()
                 if (videos.isNotEmpty()) prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
                 files.clear(); files.addAll(videos)
+                onFilesListed?.invoke(videos, newPaths)
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
                 if (testRunning && newPaths.isNotEmpty()) {
                     val clip = videos.first { it.path in newPaths }
@@ -500,6 +503,13 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         runGyro(f.name, frames, parallelism) { HttpRangeReader(f.path, f.storage) }
     }
 
+    /**
+     * Pull [f]'s whole gyro track into [out] (CSV t_ms,w,x,y,z) for a session lap. Returns false if
+     * another fetch is already running (try again later). [onDone] runs on the main thread.
+     */
+    fun fetchGyroTo(f: CameraFile, out: java.io.File, onDone: (Result<GyroResult>) -> Unit): Boolean =
+        runGyro(f.name, null, 4, saveTo = out, onDone = onDone) { HttpRangeReader(f.path, f.storage) }
+
     /** Decode a clip already on the phone (e.g. downloaded with DJI Mimo). */
     fun decodeLocalGyro(uri: Uri, name: String) {
         runGyro(name, null, 1) {
@@ -510,8 +520,12 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     fun cancelGyro() = gyroCancel.set(true)
 
-    private fun runGyro(clip: String, frames: IntRange?, parallelism: Int, open: () -> RangeReader) {
-        if (gyroBusy) return
+    private fun runGyro(
+        clip: String, frames: IntRange?, parallelism: Int,
+        saveTo: java.io.File? = null, onDone: ((Result<GyroResult>) -> Unit)? = null,
+        open: () -> RangeReader,
+    ): Boolean {
+        if (gyroBusy) return false
         gyroBusy = true; gyroProgress = 0f; gyroCancel.set(false)
         logLine("gyro: $clip ${frames?.let { "frames ${it.first}..${it.last}" } ?: "whole clip"}, $parallelism parallel")
         Thread {
@@ -523,7 +537,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                     }
                     val secs = (SystemClock.elapsedRealtime() - t0) / 1000.0
                     val samples = samples1kHz(track)
-                    GyroResult(clip, track, samples, secs, saveCsv(clip, samples))
+                    GyroResult(clip, track, samples, secs, if (saveTo != null) writeCsv(saveTo, samples) else saveCsv(clip, samples))
                 }
             }
             main.post {
@@ -540,8 +554,19 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                     logLine("gyro failed: ${it.javaClass.simpleName}: ${it.message}")
                     if (testRunning && testFetchGyro) endTest("gyro fetch failed: ${it.message}")
                 }
+                onDone?.invoke(result)
             }
         }.start()
+        return true
+    }
+
+    private fun writeCsv(f: java.io.File, s: GyroSamples): String {
+        f.parentFile?.mkdirs()
+        f.bufferedWriter().use { w ->
+            w.write("t_ms,w,x,y,z\n")
+            for (i in 0 until s.size) w.write("${s.tMs[i]},${s.w[i]},${s.x[i]},${s.y[i]},${s.z[i]}\n")
+        }
+        return f.name
     }
 
     /** Write t_ms,w,x,y,z to Downloads/WHRRAH/ (same columns as the Python CLI). */

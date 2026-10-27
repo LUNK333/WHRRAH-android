@@ -21,8 +21,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,7 +38,7 @@ import com.lunk333.whrrah.data.CsvTelemetryParser
 import com.lunk333.whrrah.data.ScrubbableLog
 import com.lunk333.whrrah.data.TelemetryLog
 import com.lunk333.whrrah.data.XrkScrubbableLog
-import com.lunk333.whrrah.osmo.CameraScreen
+import com.lunk333.whrrah.ui.WhrrahApp
 import com.lunk333.whrrah.ui.theme.WHRRAHTheme
 import com.lunk333.whrrah.xrk.XrkLog
 import com.lunk333.whrrah.xrk.XrkLogParser
@@ -59,21 +57,11 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
         setContent {
             WHRRAHTheme {
-                var tab by remember { mutableStateOf(0) }
                 Scaffold { innerPadding ->
-                    Column(Modifier.fillMaxSize().padding(innerPadding)) {
-                        TabRow(selectedTabIndex = tab) {
-                            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Data") })
-                            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Camera") })
-                        }
-                        when (tab) {
-                            0 -> TelemetryScreen(
-                                modifier = Modifier.fillMaxSize(),
-                                incomingXrkUri = sharedXrkUri
-                            )
-                            else -> CameraScreen(modifier = Modifier.fillMaxSize())
-                        }
-                    }
+                    WhrrahApp(
+                        modifier = Modifier.fillMaxSize().padding(innerPadding),
+                        legacyData = { m -> TelemetryScreen(modifier = m, incomingXrkUri = sharedXrkUri) },
+                    )
                 }
             }
         }

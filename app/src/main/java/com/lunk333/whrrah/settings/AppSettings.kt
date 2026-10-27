@@ -1,0 +1,47 @@
+package com.lunk333.whrrah.settings
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
+/** User settings (SharedPreferences), exposed as Compose state. */
+class AppSettings private constructor(context: Context) {
+    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    var drivers by mutableStateOf(readList("drivers")); private set
+    var cars by mutableStateOf(readList("cars")); private set
+    var lastDriver by mutableStateOf(prefs.getString("last_driver", "") ?: ""); private set
+    var lastCar by mutableStateOf(prefs.getString("last_car", "") ?: ""); private set
+    /** Connect to the camera automatically (and keep retrying) while a session is open — like DJI Mimo. */
+    var autoConnectCamera by mutableStateOf(prefs.getBoolean("auto_connect_camera", true)); private set
+    /** Fetch each new clip's whole gyro track as soon as it's listed. */
+    var autoFetchGyro by mutableStateOf(prefs.getBoolean("auto_fetch_gyro", true)); private set
+    /** Use the phone's GPS when no RaceBox is connected. */
+    var phoneGpsFallback by mutableStateOf(prefs.getBoolean("phone_gps_fallback", true)); private set
+
+    fun addDriver(name: String) { if (name.isNotBlank() && name.trim() !in drivers) { drivers = drivers + name.trim(); writeList("drivers", drivers) } }
+    fun removeDriver(name: String) { drivers = drivers - name; writeList("drivers", drivers) }
+    fun addCar(name: String) { if (name.isNotBlank() && name.trim() !in cars) { cars = cars + name.trim(); writeList("cars", cars) } }
+    fun removeCar(name: String) { cars = cars - name; writeList("cars", cars) }
+
+    fun rememberChoice(driver: String, car: String) {
+        addDriver(driver); addCar(car)
+        lastDriver = driver.trim(); lastCar = car.trim()
+        prefs.edit().putString("last_driver", lastDriver).putString("last_car", lastCar).apply()
+    }
+
+    fun changeAutoConnectCamera(on: Boolean) { autoConnectCamera = on; prefs.edit().putBoolean("auto_connect_camera", on).apply() }
+    fun changeAutoFetchGyro(on: Boolean) { autoFetchGyro = on; prefs.edit().putBoolean("auto_fetch_gyro", on).apply() }
+    fun changePhoneGpsFallback(on: Boolean) { phoneGpsFallback = on; prefs.edit().putBoolean("phone_gps_fallback", on).apply() }
+
+    // Newline-joined so order is kept (a StringSet isn't ordered).
+    private fun readList(k: String) = prefs.getString(k, "")!!.split('\n').filter { it.isNotBlank() }
+    private fun writeList(k: String, v: List<String>) = prefs.edit().putString(k, v.joinToString("\n")).apply()
+
+    companion object {
+        @Volatile private var instance: AppSettings? = null
+        fun get(context: Context): AppSettings =
+            instance ?: synchronized(this) { instance ?: AppSettings(context.applicationContext).also { instance = it } }
+    }
+}

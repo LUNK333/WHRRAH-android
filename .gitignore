@@ -18,3 +18,6 @@ local.properties
 
 # Rust build output
 target/
+
+# Local design notes (desktop repo convention)
+design notes git ignore this/

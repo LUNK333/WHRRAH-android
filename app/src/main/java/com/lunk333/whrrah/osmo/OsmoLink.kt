@@ -102,6 +102,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     @Volatile private var playbackFlag: Boolean? = null
     var recordTimeS by mutableStateOf(0); private set
     var lastStatusElapsedMs by mutableStateOf(0L); private set
+    /** Phone-clock time recording was first seen on (elapsedRealtime), for the REC timer. */
+    var recStartElapsedMs by mutableStateOf(0L); private set
     val recordEvents = mutableStateListOf<RecordEvent>()
     /** Fires on the main thread on every recording start/stop — the cue for session logging. */
     var onRecordingChanged: ((RecordEvent) -> Unit)? = null
@@ -371,7 +373,11 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     private fun onRecordState(rec: Boolean, secs: Int) {
         lastStatusElapsedMs = SystemClock.elapsedRealtime()
         // The push that reports the stop already has the counter reset to 0, so keep the last value.
-        val clipS = if (!rec && secs == 0) recordTimeS else secs
+        // The Action 4 doesn't fill the elapsed field this reads (always 0), so clip length comes
+        // from the phone's clock: start-to-stop between the pushes that report them.
+        val now = SystemClock.elapsedRealtime()
+        if (rec && recording != true) recStartElapsedMs = now - secs * 1000L
+        val clipS = if (!rec && recStartElapsedMs > 0) ((now - recStartElapsedMs) / 1000).toInt() else secs
         recordTimeS = secs
         recFlag = rec
         val was = recording

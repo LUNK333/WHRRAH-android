@@ -1049,7 +1049,10 @@ class CameraSession(
                     // ~1 Hz app-presence beat (tick is 300 ms). Without it the camera drops playback a
                     // second after we set it — see APP_PRESENCE. This is the beat 0x02/0x8E was standing
                     // in for, badly: we polled it *during* playback, which is what knocked the mode out.
-                    if (tick % 3 == 0)
+                    // WHRRAH patch: the beat is what holds playback, and the Action 4's playback (entered
+                    // via 0x01/0x01) has no exit command — so when not holding it, stop beating and the
+                    // camera drops back to capture by itself. ACKs above keep the link and pushes alive.
+                    if (tick % 3 == 0 && holdPlayback)
                         sendDuml(0x00, 0x88, APP_PRESENCE, receiverType = 0x08, receiverId = 1)
                     // No 0x02/0xA0 or 0x02/0x61 either. Both were polled here as "state query" and
                     // "status poll", which is not what they are: DJI's own command catalogue names them

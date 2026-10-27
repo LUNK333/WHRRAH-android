@@ -345,6 +345,8 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 if (videos.isNotEmpty()) prefs.edit().putStringSet(key, videos.map { it.path }.toSet()).apply()
                 files.clear(); files.addAll(videos)
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
+                if (testRunning && newPaths.isNotEmpty()) endTest("new clip listed: ${videos.first { it.path in newPaths }.name} — done")
+                else if (testRunning) mark("list done, ${videos.size} clips, nothing new yet")
             }
         }.start()
     }
@@ -356,6 +358,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     private fun onRecordState(rec: Boolean, secs: Int) {
         lastStatusElapsedMs = SystemClock.elapsedRealtime()
         recordTimeS = secs
+        recFlag = rec
         val was = recording
         recording = rec
         if (was == null || was == rec) return
@@ -363,10 +366,71 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         val e = RecordEvent(rec, System.currentTimeMillis() - backMs, SystemClock.elapsedRealtime() - backMs, secs)
         recordEvents.add(0, e)
         logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $secs s")
+        if (testRunning) mark(if (rec) "camera reports recording" else "camera reports stopped (${secs} s clip)")
         onRecordingChanged?.invoke(e)
         // The new clip only shows up in a fresh listing; give the camera a moment to finalize it.
         if (!rec) main.postDelayed({ if (phase == Phase.READY) { logLine("recording stopped — refreshing clip list"); listFiles() } }, 5000)
     }
+
+    // ---- record → refresh loop test -----------------------------------------------------------
+
+    /** One milestone of the loop test, [tS] seconds after the button press. */
+    data class TestMark(val tS: Double, val what: String)
+
+    val testMarks = mutableStateListOf<TestMark>()
+    var testRunning by mutableStateOf(false); private set
+    @Volatile private var testT0 = 0L
+    @Volatile private var recFlag: Boolean? = null
+
+    /**
+     * Start recording over WiFi, record [recordSeconds], stop, then let the normal auto-refresh run,
+     * timestamping every step until the new clip shows up in the list — to see where the time goes.
+     */
+    fun runRecordLoopTest(recordSeconds: Int = 10) {
+        val s = session ?: return logLine("test: no live datalink — list clips first")
+        if (testRunning) return
+        testRunning = true
+        testMarks.clear()
+        testT0 = SystemClock.elapsedRealtime()
+        mark("test started")
+        Thread {
+            fun waitFor(want: Boolean, timeoutMs: Long): Boolean {
+                val end = SystemClock.elapsedRealtime() + timeoutMs
+                while (SystemClock.elapsedRealtime() < end) { if (recFlag == want) return true; Thread.sleep(50) }
+                return false
+            }
+            val r1 = s.runCommand(0x02, 0x02, byteArrayOf(1), receiverType = 0x01, receiverId = 0)
+            mark("start-record command → " + (r1?.let { replyName(it) } ?: "no reply"))
+            if (!waitFor(true, 8000)) return@Thread endTest("camera never reported recording")
+            Thread.sleep(recordSeconds * 1000L)
+            val r2 = s.runCommand(0x02, 0x02, byteArrayOf(0), receiverType = 0x01, receiverId = 0)
+            mark("stop-record command → " + (r2?.let { replyName(it) } ?: "no reply"))
+            if (!waitFor(false, 10_000)) return@Thread endTest("camera never reported the stop")
+            // From here the normal flow takes over (auto-refresh after a stop); listing marks itself.
+            main.postDelayed({ if (testRunning) endTest("gave up: no new clip within 90 s of the stop") }, 90_000)
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun replyName(r: ByteArray): String = when (r.firstOrNull()?.toInt()?.and(0xFF)) {
+        0x00 -> "ok"; 0xD9 -> "wrong state (d9)"; 0xDF -> "bad param (df)"; 0xE0 -> "not supported (e0)"
+        null -> "empty"; else -> "0x%02x".format(r[0])
+    }
+
+    private fun mark(what: String) {
+        if (testT0 == 0L) return
+        val t = (SystemClock.elapsedRealtime() - testT0) / 1000.0
+        logLine("test +%.1fs: %s".format(t, what))
+        main.post { if (testRunning) testMarks.add(TestMark(t, what)) }
+    }
+
+    private fun endTest(why: String) {
+        mark(why)
+        main.post { testRunning = false; testT0 = 0L }
+    }
+
+    /** Log lines worth a timeline entry while a test runs. */
+    private val testPatterns = listOf("refreshing clip list", "handshake OK", "time synced", "playback mode held",
+        "playback mode NOT confirmed", "files (batch", "empty list", "playback mode: ")
 
     private val storageForBit = HashMap<Int, Int>()
 
@@ -473,6 +537,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onLog(s: String) = logLine(s)
 
     private fun logLine(s: String) {
+        if (testT0 != 0L && !s.startsWith("test +") && testPatterns.any { it in s }) mark(s)
         val line = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()) + "  " + s
         android.util.Log.i("OsmoLink", s)
         if (Looper.myLooper() == Looper.getMainLooper()) append(line) else main.post { append(line) }

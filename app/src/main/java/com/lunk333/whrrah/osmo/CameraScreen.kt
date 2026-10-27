@@ -265,6 +265,13 @@ private fun RecordingCard(link: OsmoLink) {
             }
             ageS?.let { Text("updated %.1f s ago".format(it), style = MaterialTheme.typography.bodySmall) }
             val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
+            OutlinedButton(
+                onClick = { link.runRecordLoopTest(10) },
+                enabled = link.phase == OsmoLink.Phase.READY && link.recording == false && !link.testRunning,
+            ) { Text(if (link.testRunning) "Testing…" else "Test: record 10 s → refresh") }
+            link.testMarks.forEach { m ->
+                Text("+%5.1f s  %s".format(m.tS, m.what), fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 13.sp)
+            }
             link.recordEvents.take(4).forEach { e ->
                 Text((if (e.started) "● started " else "■ stopped ") + fmt.format(Date(e.wallMs)) +
                     (if (!e.started) " (%d:%02d)".format(e.recordTimeS / 60, e.recordTimeS % 60) else ""),

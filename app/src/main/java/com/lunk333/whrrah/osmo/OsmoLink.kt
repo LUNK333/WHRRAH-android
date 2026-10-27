@@ -90,6 +90,17 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     var gyroProgress by mutableStateOf(0f); private set
     var gyro by mutableStateOf<GyroResult?>(null); private set
 
+    /** A recording start/stop. Times are the phone clock; a start is back-dated by the camera's counter. */
+    data class RecordEvent(val started: Boolean, val wallMs: Long, val elapsedMs: Long, val recordTimeS: Int)
+
+    /** Camera recording state from its WiFi status pushes (0x02/0x80). null = no datalink / no push yet. */
+    var recording by mutableStateOf<Boolean?>(null); private set
+    var recordTimeS by mutableStateOf(0); private set
+    var lastStatusElapsedMs by mutableStateOf(0L); private set
+    val recordEvents = mutableStateListOf<RecordEvent>()
+    /** Fires on the main thread on every recording start/stop — the cue for session logging. */
+    var onRecordingChanged: ((RecordEvent) -> Unit)? = null
+
     private val main = Handler(Looper.getMainLooper())
     private val prefs = context.getSharedPreferences("osmo", Context.MODE_PRIVATE)
     private val http = HttpClient(log = ::logLine)
@@ -282,6 +293,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onFailed(reason: String) { main.post { fail(reason) } }
 
     override fun onLost() { main.post {
+        recording = null
         logLine("camera WiFi lost")
         session?.close(); session = null
         if (phase != Phase.IDLE) fail("Camera WiFi dropped (camera asleep or out of range) — reconnect")
@@ -294,16 +306,19 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         Thread {
             session?.close()
             // Action 4 = udp/9004 after a tcp/7001 poke; Action 5 Pro = udp/10004, no poke.
-            var s = CameraSession(::logLine)
+            var s = newSession(9004, true)
             var list = runCatching { s.fetchFileList(IP) }.getOrElse { logLine("list error: ${it.message}"); emptyList() }
             if (!s.handshakeOk) {
                 s.close()
                 logLine("nothing on udp/9004 — trying udp/10004")
-                s = CameraSession(::logLine, port = 10004, tcpPoke = false)
+                s = newSession(10004, false)
                 list = runCatching { s.fetchFileList(IP) }.getOrElse { logLine("list error: ${it.message}"); emptyList() }
             }
             if (!s.handshakeOk) { s.close(); main.post { fail("Camera didn't answer the file-list request") }; return@Thread }
-            s.startKeepAlive()   // holds the AP up between actions
+            // Keep the datalink up — it holds the AP and carries the recording status pushes — but
+            // leave playback mode, which listing entered: a camera in playback can't record.
+            s.holdPlayback = false
+            s.startKeepAlive()
             session = s
             val videos = list.filter { it.ext == "MP4" || it.ext == "MOV" }
                 .map { it.copy(storage = resolveStorage(it)) }
@@ -313,6 +328,23 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 setPhase(Phase.READY, "Connected — ${videos.size} videos on camera")
             }
         }.start()
+    }
+
+    private fun newSession(port: Int, tcpPoke: Boolean) = CameraSession(::logLine, port, tcpPoke).also {
+        it.onRecordState = { rec, secs -> main.post { onRecordState(rec, secs) } }
+    }
+
+    private fun onRecordState(rec: Boolean, secs: Int) {
+        lastStatusElapsedMs = SystemClock.elapsedRealtime()
+        recordTimeS = secs
+        val was = recording
+        recording = rec
+        if (was == null || was == rec) return
+        val backMs = if (rec) secs * 1000L else 0L
+        val e = RecordEvent(rec, System.currentTimeMillis() - backMs, SystemClock.elapsedRealtime() - backMs, secs)
+        recordEvents.add(0, e)
+        logLine(if (rec) "camera: recording STARTED" else "camera: recording STOPPED after $secs s")
+        onRecordingChanged?.invoke(e)
     }
 
     private val storageForBit = HashMap<Int, Int>()
@@ -402,6 +434,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         main.removeCallbacksAndMessages(null)
         gyroCancel.set(true)
         session?.let { s -> Thread { runCatching { s.close() } }.start() }
+        recording = null
         session = null
         ap?.release(); ap = null
         gatt?.disconnect(); gatt?.close(); gatt = null

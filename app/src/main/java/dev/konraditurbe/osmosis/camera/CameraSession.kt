@@ -117,6 +117,13 @@ class CameraSession(
     // capture mode — recording — throughout a transfer. Now: confirm on entry, retry, hold for the
     // whole session, and release only on teardown.
     @Volatile private var playbackHeld = false
+
+    /**
+     * WHRRAH patch. false = the keep-alive holds the link (status pushes, AP up) but NOT playback
+     * mode, and leaves playback if the camera is in it — a camera in playback can't record. Set
+     * before [startKeepAlive].
+     */
+    @Volatile var holdPlayback = true
     /** Set by [close] so the keep-alive thread sends the leave before the socket goes. */
     @Volatile private var releasePlaybackOnExit = false
     @Volatile private var playbackReleased = false
@@ -986,7 +993,7 @@ class CameraSession(
             // playbackHeld instead was wrong — that flag survives a re-registration, so a refreshed
             // session (the delete flow) would have skipped entry on a body that drops the mode when
             // the old session goes away, and written outside playback believing it held.
-            enterPlaybackConfirmed()
+            if (holdPlayback) enterPlaybackConfirmed()
             while (keepAliveOn) {
                 runCatching {
                     val dg = recvAll(200)
@@ -1060,8 +1067,15 @@ class CameraSession(
                     // should simply stay, but the camera can also be knocked out of it by something we
                     // don't control — a button press on the body, a mode change, a firmware quirk — and
                     // silently losing it costs a 28 s delete. Idempotent and one frame per 33 ticks.
-                    if (playbackHeld && tick % 33 == 0)
+                    if (playbackHeld && holdPlayback && tick % 33 == 0)
                         sendDuml(0x02, 0x0C, hex("01010001"), receiverType = 0x01, receiverId = 0)
+                    // WHRRAH patch: not holding playback — leave it (now, and again every ~10 s if the
+                    // camera still reports it) so recording can start from the body or a remote.
+                    if (!holdPlayback && tick % 33 == 0 && (playbackHeld || playbackReported == true)) {
+                        sendDuml(0x02, 0x0C, hex("01010000"), receiverType = 0x01, receiverId = 0)
+                        playbackHeld = false
+                        log("datalink: leaving playback mode so the camera can record")
+                    }
                     if (awaitingCmd == null) cmdQueue.poll()?.let { c ->
                         awaitingCmd = c
                         sendDuml(c.set, c.cmd, c.payload, receiverType = c.rType, receiverId = c.rId, cmdType = c.cType)

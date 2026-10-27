@@ -42,6 +42,12 @@ abstract class DumlSession(
         private set
 
     /**
+     * WHRRAH patch: every `0x02/0x80` push as (recording, elapsed record seconds) — bit 7 of byte 0
+     * and the u16-LE at byte 29 (MEDIA_PROTOCOL.md §18). Called on the datalink thread.
+     */
+    @Volatile var onRecordState: ((Boolean, Int) -> Unit)? = null
+
+    /**
      * When the current session last completed its handshake+registration, or 0 if never.
      *
      * Measured on a Nano: inline command **writes** stop being answered roughly 70 s after this, while
@@ -232,6 +238,8 @@ abstract class DumlSession(
                 // report. This frame arrives unprompted on every session, so the answer was already
                 // on the wire. Logged on change only.
                 val inPlayback = (u32le(p, 0).toInt() and 0x40000000) != 0
+                onRecordState?.invoke((p[0].toInt() and 0x80) != 0,   // WHRRAH patch
+                    if (p.size >= 31) (p[29].toInt() and 0xFF) or ((p[30].toInt() and 0xFF) shl 8) else 0)
                 if (playbackReported != inPlayback) {
                     playbackReported = inPlayback
                     log("camera reports playback mode: ${if (inPlayback) "YES" else "no"}")

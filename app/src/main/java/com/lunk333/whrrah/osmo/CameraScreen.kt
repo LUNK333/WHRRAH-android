@@ -7,7 +7,20 @@ import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -75,6 +88,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         OsmoLink.Phase.READING_WIFI, OsmoLink.Phase.JOINING_WIFI, OsmoLink.Phase.LISTING)
 
     LazyColumn(modifier = modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { RecordingCard(link) }
         item {
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Column(Modifier.padding(12.dp)) {
@@ -222,3 +236,34 @@ private fun displayName(context: android.content.Context, uri: Uri): String =
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
         if (it.moveToFirst()) it.getString(0) else null
     } ?: uri.lastPathSegment ?: "clip"
+
+/** Is the camera recording? From the camera's status pushes on the WiFi datalink. */
+@Composable
+private fun RecordingCard(link: OsmoLink) {
+    // Tick so the staleness check stays current between pushes.
+    var now by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(Unit) { while (true) { delay(500); now = SystemClock.elapsedRealtime() } }
+
+    val ageS = if (link.lastStatusElapsedMs == 0L) null else (now - link.lastStatusElapsedMs) / 1000.0
+    val (light, label) = when {
+        link.recording == null -> Color.Gray to (if (link.phase == OsmoLink.Phase.READY) "Waiting for camera status…" else "Not connected (needs WiFi)")
+        ageS == null || ageS > 4 -> Color(0xFFE0A000) to "No status from camera"
+        link.recording == true -> Color(0xFFE53935) to "REC  %d:%02d".format(link.recordTimeS / 60, link.recordTimeS % 60)
+        else -> Color(0xFF43A047) to "Standby — not recording"
+    }
+    Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(light))
+                Text(label, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 12.dp))
+            }
+            ageS?.let { Text("updated %.1f s ago".format(it), style = MaterialTheme.typography.bodySmall) }
+            val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
+            link.recordEvents.take(4).forEach { e ->
+                Text((if (e.started) "● started " else "■ stopped ") + fmt.format(Date(e.wallMs)) +
+                    (if (!e.started) " (%d:%02d)".format(e.recordTimeS / 60, e.recordTimeS % 60) else ""),
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}

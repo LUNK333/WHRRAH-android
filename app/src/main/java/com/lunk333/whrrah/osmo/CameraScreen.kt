@@ -252,6 +252,8 @@ private fun RecordingCard(link: OsmoLink) {
 
     val ageS = if (link.lastStatusElapsedMs == 0L) null else (now - link.lastStatusElapsedMs) / 1000.0
     val (light, label) = when {
+        link.inPlayback && link.recording == false && ageS != null && ageS <= 4 ->
+            Color(0xFF1E88E5) to "Viewer mode — can't record yet"
         link.recording == null -> Color.Gray to (if (link.phase == OsmoLink.Phase.READY) "Waiting for camera status…" else "Not connected (needs WiFi)")
         ageS == null || ageS > 4 -> Color(0xFFE0A000) to "No status from camera"
         link.recording == true -> Color(0xFFE53935) to "REC  %d:%02d".format(link.recordTimeS / 60, link.recordTimeS % 60)

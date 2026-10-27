@@ -97,6 +97,9 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     /** Camera recording state from its WiFi status pushes (0x02/0x80). null = no datalink / no push yet. */
     var recording by mutableStateOf<Boolean?>(null); private set
+    /** Camera says it's in playback (viewer) mode — it can't start recording until it drops out. */
+    var inPlayback by mutableStateOf(false); private set
+    @Volatile private var playbackFlag: Boolean? = null
     var recordTimeS by mutableStateOf(0); private set
     var lastStatusElapsedMs by mutableStateOf(0L); private set
     val recordEvents = mutableStateListOf<RecordEvent>()
@@ -352,7 +355,11 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     }
 
     private fun newSession(port: Int, tcpPoke: Boolean) = CameraSession(::logLine, port, tcpPoke).also {
-        it.onRecordState = { rec, secs -> main.post { onRecordState(rec, secs) } }
+        it.onRecordState = { rec, secs ->
+            val pb = it.playbackReported
+            playbackFlag = pb
+            main.post { inPlayback = pb == true; onRecordState(rec, secs) }
+        }
     }
 
     private fun onRecordState(rec: Boolean, secs: Int) {
@@ -399,8 +406,22 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
                 while (SystemClock.elapsedRealtime() < end) { if (recFlag == want) return true; Thread.sleep(50) }
                 return false
             }
-            val r1 = s.runCommand(0x02, 0x02, byteArrayOf(1), receiverType = 0x01, receiverId = 0)
-            mark("start-record command → " + (r1?.let { replyName(it) } ?: "no reply"))
+            // After a listing the camera sits in playback (viewer) mode for several seconds and
+            // rejects record commands until it falls back to capture.
+            if (playbackFlag == true) {
+                mark("camera is in viewer mode — waiting for it to drop back to capture")
+                val end = SystemClock.elapsedRealtime() + 30_000
+                while (playbackFlag == true && SystemClock.elapsedRealtime() < end) Thread.sleep(100)
+                if (playbackFlag == true) return@Thread endTest("camera stayed in viewer mode for 30 s")
+                mark("camera back in capture mode")
+            }
+            var r1: ByteArray? = null
+            for (attempt in 1..5) {
+                r1 = s.runCommand(0x02, 0x02, byteArrayOf(1), receiverType = 0x01, receiverId = 0)
+                mark("start-record command (try $attempt) → " + (r1?.let { replyName(it) } ?: "no reply"))
+                if (r1?.firstOrNull()?.toInt() == 0) break
+                Thread.sleep(1000)
+            }
             if (!waitFor(true, 8000)) return@Thread endTest("camera never reported recording")
             Thread.sleep(recordSeconds * 1000L)
             val r2 = s.runCommand(0x02, 0x02, byteArrayOf(0), receiverType = 0x01, receiverId = 0)

@@ -55,10 +55,10 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 |---|---|---|---|---|
 | B1a | Measure WiFi fetch speed with the Python CLI (ms/request, full clip vs 60 s window) — HANDOFF open Q1 | car | TODO | |
 | B1b | Cut request count: try HTTP multi-range / parallel connections / windowed fetch — HANDOFF open Q2 | car | TODO | |
-| B1c | Android BLE: pair with camera (DUML over GATT `fff5`/`fff4`), keepalive, read SSID + password. Reference: osmosis Android app | any | TODO | |
-| B1d | Android WiFi: join camera AP with `WifiNetworkSpecifier`, bind HTTP traffic to that network (no internet on it) | car | TODO | |
-| B1e | Android: list files on camera (UDP datalink or HEAD probe) | car | TODO | |
-| B1f | Port `osmo_wifi_gyro.py` decoder to Kotlin (moov walk, djmd protobuf, timebase incl. u32 wrap) + unit tests against Python output as fixtures | any | TODO | |
+| B1c | Android BLE: pair with camera (DUML over GATT `fff5`/`fff4`), keepalive, read SSID + password. Reference: osmosis Android app | any | DOING | desk |
+| B1d | Android WiFi: join camera AP with `WifiNetworkSpecifier`, bind HTTP traffic to that network (no internet on it) | car | DOING | desk |
+| B1e | Android: list files on camera (UDP datalink or HEAD probe) | car | DOING | desk |
+| B1f | Port `osmo_wifi_gyro.py` decoder to Kotlin (moov walk, djmd protobuf, timebase incl. u32 wrap) + unit tests against Python output as fixtures | any | DONE | desk |
 | B1g | Fix desktop `read_mp4_creation_time()` treating UTC as local (4 h off) — desktop repo | any | TODO | |
 
 ### B2 — RaceBox Mini (BLE: GPS + IMU) — needs H2
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-26 · desk · B1c–B1f · Camera tab in the app: BLE scan/pair → read WiFi creds → join AP → list clips → fetch gyro (window + parallelism selectable, shows ms/request = B1a measurement), CSV to Downloads/WHRRAH. Protocol code vendored from osmosis (MIT, `dev/konraditurbe/osmosis/`). Gyro decoder ported to Kotlin (B1f done: matches Python exactly on fixture + real 4.4 GB clip). **B1c–e untested on a real camera** — first thing to check with the Osmo. Target: basic lap timer + DJI + RaceBox for Sunday autox (2026-11-01).
 - 2026-10-25 · desk · S7 · Design doc: goal is now to replace the AiM Solo (phone logger + on-device overlay, SoloStorm-style); .xrk is testing-only. Rewrote §8 for WiFi camera access. Added workstream L (sessions + lap timing).
 - 2026-10-25 · desk · S1, S2, S3 · Committed all Android work, pushed to github.com/LUNK333/WHRRAH-android (branch `main`). Pushed `wifi_gyro_sync` to WHRRAH. Dropped 59.94 fps gyro task (out of scope: those recording formats have no gyro).
 - 2026-10-25 · desk · — · Board created from `WHRRAH android ver. development dashboard.xlsx`. Fixed `.gitignore` (was about to commit `app/build/` + 348 MB `rust/xrk-ffi/target/`).

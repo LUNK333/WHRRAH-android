@@ -151,6 +151,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     fun connect(addr: String, name: String?) {
         stopScan()
         disconnect()
+        RecordingMonitor.get(context).stop()   // one BLE link to the camera at a time
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
             ?: return fail("Bluetooth unavailable")
         address = addr
@@ -417,6 +418,9 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     private fun fail(msg: String) = setPhase(Phase.FAILED, msg)
 
     override fun onLog(s: String) = logLine(s)
+
+    /** Shared log for the Camera tab (also used by [RecordingMonitor]). Any thread. */
+    fun appendLog(s: String) = logLine(s)
 
     private fun logLine(s: String) {
         val line = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()) + "  " + s

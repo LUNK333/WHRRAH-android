@@ -6,8 +6,10 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.ContentValues
 import android.content.Context
+import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -264,6 +266,16 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onNetwork(network: Network, link: LinkProperties?) { main.post {
         logLine("WiFi up: ${link?.linkAddresses?.joinToString() ?: "?"}")
         gatt?.disconnect()   // done with BLE; the camera expects the handoff
+        // ApJoiner binds the process to the camera network. A non-bypassable VPN (e.g. AdGuard)
+        // refuses that bind, and every request then leaks out the VPN and never reaches the camera.
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        if (cm.boundNetworkForProcess != network) {
+            val vpn = cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+            return@post fail(
+                if (vpn) "A VPN app (e.g. AdGuard) is blocking the camera WiFi — exclude WHRRAH from it or pause it, then reconnect"
+                else "Android wouldn't route the app over the camera WiFi — reconnect"
+            )
+        }
         listFiles()
     } }
 

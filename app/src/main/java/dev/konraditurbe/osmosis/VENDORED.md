@@ -9,6 +9,3 @@ Don't edit these files: WHRRAH's own code that drives them is
 `com.lunk333.whrrah.osmo.OsmoLink`. To update, re-copy the same files from a newer
 osmosis checkout and re-run the unit tests (`Oa4ManifestTest`, `Oa4StarredManifestTest`
 are vendored from osmosis too).
-
-Also `rsdk/RsdkController.kt` + `rsdk/RsdkProtocol.kt` (DJI R-SDK remote protocol: BLE camera
-status / recording state), with their tests, driven by `com.lunk333.whrrah.osmo.RecordingMonitor`.

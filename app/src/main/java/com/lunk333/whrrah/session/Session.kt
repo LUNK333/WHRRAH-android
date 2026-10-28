@@ -1,6 +1,7 @@
 package com.lunk333.whrrah.session
 
 import com.lunk333.whrrah.gps.Geo
+import com.lunk333.whrrah.gps.TrackPath
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -24,15 +25,48 @@ data class TrackLine(
     val headingSource: String? = null,
     /** Net calibration nudge along [headingDeg] since the line was set, metres (+ = further along the course). */
     val nudgeM: Double = 0.0,
+    /** Where the line was originally set (nudges are always measured from here, so they can't drift). */
+    val setLat: Double? = null,
+    val setLon: Double? = null,
+    val setHeadingDeg: Double? = null,
 ) {
+    /** The line as originally set (for lines saved before set-points were kept: undo the straight nudge). */
+    private fun origin(): Triple<Double, Double, Double>? {
+        if (setLat != null && setLon != null && setHeadingDeg != null) return Triple(setLat, setLon, setHeadingDeg)
+        val h = headingDeg ?: return null
+        val back = Geo.offset(lat, lon, h, -nudgeM)
+        return Triple(back.lat, back.lon, h)
+    }
+
     /**
-     * The same line moved [meters] along its heading (negative = back), still square to the heading.
-     * Used to calibrate against official timing. Point-only lines (no heading) can't be nudged.
+     * The same line moved [meters] further along the course (negative = back), for calibrating against
+     * official timing. With a course-walk [path] it slides along the walk and turns with it, staying
+     * square to the local direction of the course and keeping its small sideways offset from the trace;
+     * it stops at the ends of the walk. Without one (or if the line is > [TrackPath.MAX_SNAP_M] from
+     * the walk) it slides straight along its own heading. Point-only lines can't be nudged.
      */
-    fun nudged(meters: Double): TrackLine {
-        val h = headingDeg ?: return this
-        val c = Geo.offset(lat, lon, h, meters)
-        return copy(lat = c.lat, lon = c.lon, nudgeM = nudgeM + meters)
+    fun nudged(meters: Double, path: TrackPath? = null): TrackLine {
+        val (oLat, oLon, oHeading) = origin() ?: return this
+        val total = nudgeM + meters
+        val base = copy(setLat = oLat, setLon = oLon, setHeadingDeg = oHeading, nudgeM = total)
+        if (total == 0.0) return base.copy(lat = oLat, lon = oLon, headingDeg = oHeading)
+        val proj = path?.project(Geo.LatLon(oLat, oLon))
+        if (path == null || proj == null || proj.distance > TrackPath.MAX_SNAP_M) {
+            val c = Geo.offset(oLat, oLon, oHeading, total)
+            return base.copy(lat = c.lat, lon = c.lon, headingDeg = oHeading)
+        }
+        // Which way along the walk is "forward": the way the line faces.
+        val walkDir = path.headingAt(proj.along)
+        val sign = if (kotlin.math.abs(((oHeading - walkDir + 540) % 360) - 180) <= 90) 1.0 else -1.0
+        // Stop at the ends of the walk, and keep the reported offset honest about it.
+        val maxFwd = if (sign > 0) path.length - proj.along else proj.along
+        val maxBack = if (sign > 0) proj.along else path.length - proj.along
+        val t = total.coerceIn(-maxBack, maxFwd)
+        val along = proj.along + sign * t
+        val pathHeading = path.headingAt(along)
+        val c = path.pointAt(along, proj.lateral, pathHeading)
+        val facing = if (sign > 0) pathHeading else (pathHeading + 180) % 360
+        return base.copy(lat = c.lat, lon = c.lon, headingDeg = facing, nudgeM = t)
     }
 
     /** The two ends of the line (left, right as seen travelling along [headingDeg]). Null without a heading. */
@@ -43,6 +77,7 @@ data class TrackLine(
 
     fun toJson(): JSONObject = JSONObject().put("lat", lat).put("lon", lon).put("widthM", widthM)
         .putOpt("headingDeg", headingDeg).putOpt("headingSource", headingSource).put("nudgeM", nudgeM)
+        .putOpt("setLat", setLat).putOpt("setLon", setLon).putOpt("setHeadingDeg", setHeadingDeg)
         .apply { accuracyM?.let { put("accuracyM", it.toDouble()) } }
 
     companion object {
@@ -55,6 +90,9 @@ data class TrackLine(
                 accuracyM = if (it.has("accuracyM")) it.getDouble("accuracyM").toFloat() else null,
                 headingSource = it.optStringOrNull("headingSource"),
                 nudgeM = it.optDouble("nudgeM", 0.0),
+                setLat = it.optDoubleOrNull("setLat"),
+                setLon = it.optDoubleOrNull("setLon"),
+                setHeadingDeg = it.optDoubleOrNull("setHeadingDeg"),
             )
         }
     }
@@ -204,3 +242,4 @@ class SessionStore(val root: File) {
 
 private fun JSONObject.optStringOrNull(k: String): String? = if (has(k) && !isNull(k)) getString(k) else null
 private fun JSONObject.optLongOrNull(k: String): Long? = if (has(k) && !isNull(k)) getLong(k) else null
+private fun JSONObject.optDoubleOrNull(k: String): Double? = if (has(k) && !isNull(k)) getDouble(k) else null

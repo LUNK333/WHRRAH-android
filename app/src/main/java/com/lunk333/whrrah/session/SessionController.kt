@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import com.lunk333.whrrah.gps.Geo
 import com.lunk333.whrrah.gps.GpsFix
 import com.lunk333.whrrah.gps.HeadingEstimator
+import com.lunk333.whrrah.gps.TrackPath
 import com.lunk333.whrrah.gps.GpsSource
 import com.lunk333.whrrah.gps.PhoneGps
 import com.lunk333.whrrah.osmo.OsmoLink
@@ -87,6 +88,7 @@ class SessionController private constructor(context: Context) {
         val stale = s.laps.filter { it.recording }
         session = if (stale.isEmpty()) s else s.copy(laps = s.laps.map { lap ->
             if (!lap.recording) lap else lap.copy(recStopWallMs = lastFixWallMs(s, lap) ?: lap.recStartWallMs,
+                gpsFixes = gpsFixCount(s, lap) ?: lap.gpsFixes,
                 note = lap.note ?: "interrupted — the app was closed mid-run")
         }).also { store.save(it) }
         loadWalkPath(s)
@@ -100,6 +102,11 @@ class SessionController private constructor(context: Context) {
         File(store.gpsDir(s.id), lap.gpsFile ?: return null).useLines { lines ->
             lines.drop(1).lastOrNull()?.split(',')?.getOrNull(1)?.toLongOrNull()?.takeIf { it > 0 }
         }
+    }.getOrNull()
+
+    /** Fixes actually in a run's GPS log (its in-memory counter is only saved at the end of the run). */
+    private fun gpsFixCount(s: Session, lap: Lap): Int? = runCatching {
+        File(store.gpsDir(s.id), lap.gpsFile ?: return null).useLines { lines -> (lines.count() - 1).coerceAtLeast(0) }
     }.getOrNull()
 
     /** Start the GPS (call once location permission is granted). */
@@ -239,11 +246,20 @@ class SessionController private constructor(context: Context) {
             runCatching { ww.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n") }
             addWalkPoint(fix.lat, fix.lon, fix.accuracyM)
         }
+        // Flush the logs about once a second: if the app is killed mid-run, the run keeps its GPS
+        // (and the reopened session can close it at its real last fix) instead of losing the buffer.
+        if (fix.elapsedMs - lastFlushMs >= 1000) {
+            lastFlushMs = fix.elapsedMs
+            runCatching { walkWriter?.flush() }
+            runCatching { gpsWriter?.flush() }
+        }
         val w = gpsWriter ?: return
         w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n")
         val n = gpsLapN
         session?.let { s -> session = s.copy(laps = s.laps.map { if (it.n == n) it.copy(gpsFixes = it.gpsFixes + 1) else it }) }
     }
+
+    private var lastFlushMs = 0L
 
     // ---- track -------------------------------------------------------------------------------
 
@@ -256,7 +272,9 @@ class SessionController private constructor(context: Context) {
     fun nudgeLine(start: Boolean, meters: Double, undo: Boolean = false) {
         val s = session ?: return
         val l = (if (start) s.start else s.finish) ?: return
-        val moved = l.nudged(if (undo) -l.nudgeM else meters)
+        // Slide along the course walk when there is one (so a big nudge follows the course).
+        val path = TrackPath(walkPath.toList()).takeIf { it.usable }
+        val moved = l.nudged(if (undo) -l.nudgeM else meters, path)
         update(if (start) s.copy(start = moved) else s.copy(finish = moved))
         activity = (if (start) "Start" else "Finish") + " line " +
             (if (moved.nudgeM == 0.0) "back where it was set" else "%+.0f m from where it was set".format(moved.nudgeM))
@@ -267,7 +285,8 @@ class SessionController private constructor(context: Context) {
         val fix = gps.lastFix ?: return "No GPS fix yet"
         val est = HeadingEstimator.estimate(recentFixes.toList(), android.os.SystemClock.elapsedRealtime())
             ?: return "Can't tell which way you're going — walk a few steps in the driving direction, then tap again"
-        val line = TrackLine(fix.lat, fix.lon, est.headingDeg, settings.lineWidthFt * Geo.FT, fix.accuracyM, est.how)
+        val line = TrackLine(fix.lat, fix.lon, est.headingDeg, settings.lineWidthFt * Geo.FT, fix.accuracyM, est.how,
+            setLat = fix.lat, setLon = fix.lon, setHeadingDeg = est.headingDeg)
         update(if (start) s.copy(start = line) else s.copy(finish = line))
         activity = (if (start) "Start" else "Finish") + " line set: %.0f ft wide, facing %.0f° (from %s, ±%.1f m)"
             .format(settings.lineWidthFt, est.headingDeg, est.how, fix.accuracyM ?: 0f)

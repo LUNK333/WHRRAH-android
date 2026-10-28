@@ -1,5 +1,6 @@
 package com.lunk333.whrrah.session
 
+import com.lunk333.whrrah.gps.Geo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -7,13 +8,41 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** A GPS position the user pinned (start or finish line of a point-to-point autocross course). */
-data class TrackPoint(val lat: Double, val lon: Double, val accuracyM: Float?) {
-    fun toJson(): JSONObject = JSONObject().put("lat", lat).put("lon", lon).apply { accuracyM?.let { put("accuracyM", it.toDouble()) } }
+/**
+ * A start or finish line of a point-to-point autocross course: [widthM] wide, centred on (lat, lon),
+ * at right angles to [headingDeg] — the direction of travel when it was set. Crossing it in that
+ * direction is what lap timing (L3) looks for.
+ */
+data class TrackLine(
+    val lat: Double,
+    val lon: Double,
+    /** Direction of travel, degrees from north. Null only for lines saved before headings existed. */
+    val headingDeg: Double?,
+    val widthM: Double,
+    val accuracyM: Float?,
+    /** How the heading was found, for display ("GPS heading at 1.2 m/s", "your last 6 m of movement"). */
+    val headingSource: String? = null,
+) {
+    /** The two ends of the line (left, right as seen travelling along [headingDeg]). Null without a heading. */
+    fun endpoints(): Pair<Geo.LatLon, Geo.LatLon>? {
+        val h = headingDeg ?: return null
+        return Geo.offset(lat, lon, h - 90, widthM / 2) to Geo.offset(lat, lon, h + 90, widthM / 2)
+    }
+
+    fun toJson(): JSONObject = JSONObject().put("lat", lat).put("lon", lon).put("widthM", widthM)
+        .putOpt("headingDeg", headingDeg).putOpt("headingSource", headingSource)
+        .apply { accuracyM?.let { put("accuracyM", it.toDouble()) } }
 
     companion object {
         fun fromJson(o: JSONObject?) = o?.let {
-            TrackPoint(it.getDouble("lat"), it.getDouble("lon"), if (it.has("accuracyM")) it.getDouble("accuracyM").toFloat() else null)
+            TrackLine(
+                lat = it.getDouble("lat"),
+                lon = it.getDouble("lon"),
+                headingDeg = if (it.has("headingDeg") && !it.isNull("headingDeg")) it.getDouble("headingDeg") else null,
+                widthM = it.optDouble("widthM", 20 * Geo.FT),
+                accuracyM = if (it.has("accuracyM")) it.getDouble("accuracyM").toFloat() else null,
+                headingSource = it.optStringOrNull("headingSource"),
+            )
         }
     }
 }
@@ -75,11 +104,11 @@ data class Session(
     val driver: String,
     val car: String,
     val createdMs: Long,
-    val start: TrackPoint? = null,
-    val finish: TrackPoint? = null,
+    val start: TrackLine? = null,
+    val finish: TrackLine? = null,
     val laps: List<Lap> = emptyList(),
 ) {
-    val trackDefined: Boolean get() = start != null && finish != null
+    val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
     val bestLapMs: Long? get() = laps.mapNotNull { it.lapTimeMs }.minOrNull()
 
     fun toJson(): JSONObject = JSONObject()
@@ -97,8 +126,8 @@ data class Session(
             driver = o.optString("driver"),
             car = o.optString("car"),
             createdMs = o.getLong("createdMs"),
-            start = TrackPoint.fromJson(o.optJSONObject("start")),
-            finish = TrackPoint.fromJson(o.optJSONObject("finish")),
+            start = TrackLine.fromJson(o.optJSONObject("start")),
+            finish = TrackLine.fromJson(o.optJSONObject("finish")),
             laps = o.optJSONArray("laps")?.let { a -> List(a.length()) { Lap.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
 

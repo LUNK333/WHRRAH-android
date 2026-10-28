@@ -117,7 +117,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 | ID | Task | Where | Status | Who |
 |---|---|---|---|---|
 | L1 | Session storage on device: list/rename/delete sessions, export CSV (same format the CSV importer reads) | any | TODO | |
-| L2 | Track definitions: start/finish line (+ optional splits) set on a map or by "drop line here" while parked on it; saved per track | any | TODO | |
+| L2 | Track definitions: start/finish line (+ optional splits) set on a map or by "drop line here" while parked on it; saved per track | any | DONE | desk |
 | L3 | Lap detection from RaceBox GPS: line-crossing with interpolation between fixes for sub-sample timing | any | TODO | |
 | L4 | Check lap times vs AiM Solo on the same session (run both in car once) | car | TODO | |
 | L5 | Keep logging alive with screen off / app in background (foreground service, wake lock, BLE reconnect) | any | TODO | |
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-27 · desk · L2 · Start/finish are now lines: width from Settings (default 20 ft), centred on the fix, square to the direction of travel (GPS heading when moving >0.5 m/s, else bearing of the last ≥5 m walked in 30 s). Track sketch on the session screen. Next: L3 lap timing = crossing detection against these lines.
 - 2026-10-27 · desk · B2a, B2d, B2e · RaceBox: UBX framer + 80 B Data Message parser (tested against the protocol doc's example packet), BLE client (MTU 517, high priority, DIS read, GNSS config query), Dev options → RaceBox test panel (live data, rate/gaps/checksum stats, CSV log). Sessions use the RaceBox as GPS when it's streaming, phone GPS otherwise. Not yet tried on the device. Skipped B2b/B2c (nRF Connect / PC prototype) — went straight to Kotlin with the doc's golden packet.
 - 2026-10-27 · desk · G2, L1, L2 · GUI skeleton per `design notes git ignore this/GUI design.txt`: Home (new/open session, settings, dev options, camera+GPS status), session folders (`Android/data/com.lunk333.whrrah/files/sessions/<event>_<date>/`), session screen with Define track (start/finish from GPS), runs list. Each camera recording = one run: GPS logged during it, clip matched by timestamp after stop, whole gyro pulled into the session. Phone GPS as stand-in source; lap time + sync offset are placeholders until RaceBox (B2/L3/I4). Old Data tab moved to Dev options. Not yet tried with the camera on the phone.
 - 2026-10-27 · desk · B1a, B1c–e · Proven on the Osmo Action 4: BLE pair → WiFi join → clip list → gyro, plus a REC indicator from WiFi status pushes and record start/stop over WiFi. Loop test: stop → new clip listed ≈15 s, 2 min clip gyro pull 6.6 s (2.2 ms/request, 4 parallel) — clip length doesn't matter. Camera can't record for ~9 s after each listing (viewer mode; Action 4 has no exit command). BLE R-SDK monitor tried and dropped (camera ignores DUML pairing on an R-SDK link). Phone needs AdGuard paused/excluded. Next: RaceBox (B2) + lap timing (L2/L3).

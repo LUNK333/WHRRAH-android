@@ -31,6 +31,14 @@ class AppSettings private constructor(context: Context) {
         prefs.edit().putString("last_driver", lastDriver).putString("last_car", lastCar).apply()
     }
 
+    /** Width of start/finish lines set from now on, in feet. */
+    var lineWidthFt by mutableStateOf(prefs.getFloat("line_width_ft", DEFAULT_LINE_WIDTH_FT)); private set
+
+    fun changeLineWidthFt(ft: Float) {
+        lineWidthFt = ft.coerceIn(MIN_LINE_WIDTH_FT, MAX_LINE_WIDTH_FT)
+        prefs.edit().putFloat("line_width_ft", lineWidthFt).apply()
+    }
+
     fun changeAutoConnectCamera(on: Boolean) { autoConnectCamera = on; prefs.edit().putBoolean("auto_connect_camera", on).apply() }
     fun changeAutoFetchGyro(on: Boolean) { autoFetchGyro = on; prefs.edit().putBoolean("auto_fetch_gyro", on).apply() }
     fun changePhoneGpsFallback(on: Boolean) { phoneGpsFallback = on; prefs.edit().putBoolean("phone_gps_fallback", on).apply() }
@@ -40,6 +48,10 @@ class AppSettings private constructor(context: Context) {
     private fun writeList(k: String, v: List<String>) = prefs.edit().putString(k, v.joinToString("\n")).apply()
 
     companion object {
+        const val DEFAULT_LINE_WIDTH_FT = 20f
+        const val MIN_LINE_WIDTH_FT = 5f
+        const val MAX_LINE_WIDTH_FT = 200f
+
         @Volatile private var instance: AppSettings? = null
         fun get(context: Context): AppSettings =
             instance ?: synchronized(this) { instance ?: AppSettings(context.applicationContext).also { instance = it } }

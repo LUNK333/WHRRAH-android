@@ -6,7 +6,9 @@ import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.lunk333.whrrah.gps.Geo
 import com.lunk333.whrrah.gps.GpsFix
+import com.lunk333.whrrah.gps.HeadingEstimator
 import com.lunk333.whrrah.gps.GpsSource
 import com.lunk333.whrrah.gps.PhoneGps
 import com.lunk333.whrrah.osmo.OsmoLink
@@ -179,7 +181,12 @@ class SessionController private constructor(context: Context) {
         gpsLapN = 0
     }
 
+    /** The last ~30 s of fixes from the active source, for working out the direction of travel. */
+    private val recentFixes = ArrayDeque<GpsFix>()
+
     private fun onFix(fix: GpsFix, source: String) {
+        recentFixes.addLast(fix)
+        while (recentFixes.isNotEmpty() && fix.elapsedMs - recentFixes.first().elapsedMs > HeadingEstimator.WINDOW_MS + 2000) recentFixes.removeFirst()
         val w = gpsWriter ?: return
         w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n")
         val n = gpsLapN
@@ -189,14 +196,24 @@ class SessionController private constructor(context: Context) {
     // ---- track -------------------------------------------------------------------------------
 
     /** Pin the start (or finish) line at the current GPS fix. False if there's no fix yet. */
-    fun setTrackPoint(start: Boolean): Boolean {
-        val s = session ?: return false
-        val fix = gps.lastFix ?: return false
-        val p = TrackPoint(fix.lat, fix.lon, fix.accuracyM)
-        update(if (start) s.copy(start = p) else s.copy(finish = p))
-        activity = (if (start) "Start" else "Finish") + " set (±%.0f m)".format(fix.accuracyM ?: 0f)
-        return true
+    /**
+     * Set the start (or finish) line: [AppSettings.lineWidthFt] wide, centred on the current fix,
+     * at right angles to the direction of travel. Returns an error to show, or null on success.
+     */
+    fun setLine(start: Boolean): String? {
+        val s = session ?: return "No session open"
+        val fix = gps.lastFix ?: return "No GPS fix yet"
+        val est = HeadingEstimator.estimate(recentFixes.toList(), android.os.SystemClock.elapsedRealtime())
+            ?: return "Can't tell which way you're going — walk a few steps in the driving direction, then tap again"
+        val line = TrackLine(fix.lat, fix.lon, est.headingDeg, settings.lineWidthFt * Geo.FT, fix.accuracyM, est.how)
+        update(if (start) s.copy(start = line) else s.copy(finish = line))
+        activity = (if (start) "Start" else "Finish") + " line set: %.0f ft wide, facing %.0f° (from %s, ±%.1f m)"
+            .format(settings.lineWidthFt, est.headingDeg, est.how, fix.accuracyM ?: 0f)
+        return null
     }
+
+    /** Current position + travel direction, for the track sketch. */
+    val currentFix: GpsFix? get() = gps.lastFix
 
     // ---- util --------------------------------------------------------------------------------
 

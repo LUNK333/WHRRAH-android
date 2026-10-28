@@ -29,8 +29,8 @@ class SessionTest {
         assertTrue(File(store.dir(s.id), "session.json").isFile)
         assertTrue(File(store.dir(s.id), "video").isDirectory)
         val full = s.copy(
-            start = TrackPoint(42.1, -71.2, 3.5f),
-            finish = TrackPoint(42.2, -71.3, null),
+            start = TrackLine(42.1, -71.2, 87.5, 6.096, 3.5f, "GPS heading at 1.2 m/s"),
+            finish = TrackLine(42.2, -71.3, 270.0, 10.0, null),
             laps = listOf(
                 Lap(1, 1000, 2000, clip = "DJI_x.MP4", gyroFile = "lap01.csv", gyroSamples = 120445, gpsFile = "lap01.csv",
                     gpsFixes = 42, lapTimeMs = 61234, syncOffsetMs = -350, note = "n"),

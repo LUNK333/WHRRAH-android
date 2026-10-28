@@ -52,7 +52,9 @@ import com.lunk333.whrrah.osmo.OsmoLink
 import com.lunk333.whrrah.session.Lap
 import com.lunk333.whrrah.session.Session
 import com.lunk333.whrrah.session.SessionController
-import com.lunk333.whrrah.session.TrackPoint
+import com.lunk333.whrrah.gps.Geo
+import com.lunk333.whrrah.gps.GpsFix
+import com.lunk333.whrrah.session.TrackLine
 import com.lunk333.whrrah.settings.AppSettings
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -277,7 +279,7 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
         item { ConnectionStatus() }
         if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
 
-        item { TrackCard(s, canSet = ctl.gps.lastFix != null, onSet = { ctl.setTrackPoint(it) }) }
+        item { TrackCard(s, fix = ctl.currentFix, widthFt = AppSettings.get(context).lineWidthFt, onSet = { ctl.setLine(it) }) }
 
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -309,8 +311,9 @@ private fun Stat(label: String, value: String) {
 }
 
 @Composable
-private fun TrackCard(s: Session, canSet: Boolean, onSet: (start: Boolean) -> Unit) {
+private fun TrackCard(s: Session, fix: GpsFix?, widthFt: Float, onSet: (start: Boolean) -> String?) {
     var open by remember { mutableStateOf(!s.trackDefined) }
+    var error by remember { mutableStateOf<String?>(null) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -318,25 +321,76 @@ private fun TrackCard(s: Session, canSet: Boolean, onSet: (start: Boolean) -> Un
                 TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Define track") }
             }
             if (open) {
-                Text("Point-to-point: stand on each line during the course walk and tap.", style = MaterialTheme.typography.bodySmall)
-                TrackPointRow("Start", s.start, canSet) { onSet(true) }
-                TrackPointRow("Finish", s.finish, canSet) { onSet(false) }
-                if (!canSet) Text("Waiting for a GPS fix…", style = MaterialTheme.typography.bodySmall)
+                Text("Course walk: walk toward each line in the driving direction, stop on it, tap. " +
+                    "The line is %.0f ft wide (Settings), centred on you, across your direction of travel.".format(widthFt),
+                    style = MaterialTheme.typography.bodySmall)
+                TrackLineRow("Start", s.start, fix != null) { error = onSet(true) }
+                TrackLineRow("Finish", s.finish, fix != null) { error = onSet(false) }
+                if (fix == null) Text("Waiting for a GPS fix…", style = MaterialTheme.typography.bodySmall)
+                error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE0A000)) }
+                if (s.start != null || s.finish != null || fix != null) TrackSketch(s.start, s.finish, fix)
             }
         }
     }
 }
 
 @Composable
-private fun TrackPointRow(label: String, p: TrackPoint?, canSet: Boolean, onSet: () -> Unit) {
+private fun TrackLineRow(label: String, l: TrackLine?, canSet: Boolean, onSet: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(p?.let { "%.6f, %.6f%s".format(it.lat, it.lon, it.accuracyM?.let { a -> " (±%.0f m)".format(a) } ?: "") } ?: "not set",
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                when {
+                    l == null -> "not set"
+                    l.headingDeg == null -> "point only (set before lines existed) — reset it"
+                    else -> "%.6f, %.6f · facing %.0f° · %.0f ft%s".format(l.lat, l.lon, l.headingDeg, l.widthM / Geo.FT,
+                        l.accuracyM?.let { a -> " · ±%.1f m".format(a) } ?: "")
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
-        Button(onClick = onSet, enabled = canSet) { Text(if (p == null) "Set $label" else "Reset") }
+        Button(onClick = onSet, enabled = canSet) { Text(if (l == null) "Set $label" else "Reset") }
     }
+}
+
+/**
+ * Top-down sketch (north up): start line green, finish red, each with an arrow for the driving
+ * direction, and the current position as a dot. Scaled to fit; just a sanity check on the walk.
+ */
+@Composable
+private fun TrackSketch(start: TrackLine?, finish: TrackLine?, fix: GpsFix?) {
+    val pts = buildList {
+        for (l in listOfNotNull(start, finish)) { add(Geo.LatLon(l.lat, l.lon)); l.endpoints()?.let { add(it.first); add(it.second) } }
+        fix?.let { add(Geo.LatLon(it.lat, it.lon)) }
+    }
+    if (pts.isEmpty()) return
+    val oLat = pts.map { it.lat }.average()
+    val oLon = pts.map { it.lon }.average()
+    val local = pts.map { Geo.toLocal(oLat, oLon, it.lat, it.lon) }
+    val span = maxOf(20.0, local.maxOf { kotlin.math.abs(it.first) }, local.maxOf { kotlin.math.abs(it.second) }) * 1.25
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(180.dp)) {
+        val scale = (minOf(size.width, size.height) / 2f) / span.toFloat()
+        fun xy(p: Geo.LatLon): androidx.compose.ui.geometry.Offset {
+            val (e, n) = Geo.toLocal(oLat, oLon, p.lat, p.lon)
+            return androidx.compose.ui.geometry.Offset(size.width / 2 + (e * scale).toFloat(), size.height / 2 - (n * scale).toFloat())
+        }
+        for ((l, c) in listOf(start to Color(0xFF43A047), finish to Color(0xFFE53935))) {
+            if (l == null) continue
+            val ends = l.endpoints()
+            if (ends == null) { drawCircle(c, 6f, xy(Geo.LatLon(l.lat, l.lon))); continue }
+            drawLine(c, xy(ends.first), xy(ends.second), strokeWidth = 8f)
+            // Driving-direction arrow from the centre.
+            val tip = Geo.offset(l.lat, l.lon, l.headingDeg!!, span * 0.35)
+            drawLine(c, xy(Geo.LatLon(l.lat, l.lon)), xy(tip), strokeWidth = 3f)
+            for (side in listOf(-150.0, 150.0)) drawLine(c, xy(tip), xy(Geo.offset(tip.lat, tip.lon, l.headingDeg + side, span * 0.08)), strokeWidth = 3f)
+        }
+        fix?.let { drawCircle(onSurface, 7f, xy(Geo.LatLon(it.lat, it.lon))) }
+        // Scale bar: 10 m.
+        val bar = (10 * scale).toFloat()
+        drawLine(onSurface, androidx.compose.ui.geometry.Offset(8f, size.height - 8f), androidx.compose.ui.geometry.Offset(8f + bar, size.height - 8f), strokeWidth = 3f)
+    }
+    Text("north up · bar = 10 m · dot = you", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
@@ -375,6 +429,7 @@ private fun SettingsScreen(modifier: Modifier) {
         item { Spacer(Modifier.height(4.dp)) }
         item { EditableList("Drivers", settings.drivers, settings::addDriver, settings::removeDriver) }
         item { EditableList("Cars", settings.cars, settings::addCar, settings::removeCar) }
+        item { LineWidthSetting(settings) }
         item { Toggle("Auto-connect camera while a session is open", settings.autoConnectCamera, settings::changeAutoConnectCamera) }
         item { Toggle("Pull each new clip's gyro automatically", settings.autoFetchGyro, settings::changeAutoFetchGyro) }
         item { Toggle("Use phone GPS when no RaceBox is connected", settings.phoneGpsFallback, settings::changePhoneGpsFallback) }
@@ -423,5 +478,21 @@ private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () ->
         Button(onClick = onCamera, modifier = Modifier.fillMaxWidth()) { Text("Camera test bench (pair, clips, gyro, loop tests)") }
         Button(onClick = onRaceBox, modifier = Modifier.fillMaxWidth()) { Text("RaceBox test panel (connect, live data, CSV log)") }
         OutlinedButton(onClick = onData, modifier = Modifier.fillMaxWidth()) { Text("CSV / XRK viewer (legacy)") }
+    }
+}
+
+@Composable
+private fun LineWidthSetting(settings: AppSettings) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Start/finish line width", style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { settings.changeLineWidthFt(settings.lineWidthFt - 5) }) { Text("−5") }
+                Text("%.0f ft  (%.1f m)".format(settings.lineWidthFt, settings.lineWidthFt * Geo.FT),
+                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp))
+                OutlinedButton(onClick = { settings.changeLineWidthFt(settings.lineWidthFt + 5) }) { Text("+5") }
+            }
+            Text("Applies to lines set from now on; reset a line to apply a new width to it.", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

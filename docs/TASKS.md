@@ -65,11 +65,11 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 | ID | Task | Where | Status | Who |
 |---|---|---|---|---|
-| B2a | Get RaceBox's published BLE protocol doc; note service/characteristic UUIDs, packet layout, rates | any | TODO | |
+| B2a | Get RaceBox's published BLE protocol doc; note service/characteristic UUIDs, packet layout, rates | any | DONE | desk |
 | B2b | Explore with nRF Connect on the phone (no code) — confirm UUIDs and see raw packets | car | TODO | |
 | B2c | PC prototype: Python `bleak` script that connects, parses packets, logs CSV. Save raw packet captures as test fixtures | desk | TODO | |
-| B2d | Kotlin parser (pure, unit-tested against B2c fixtures) | any | TODO | |
-| B2e | Android BLE connection service: scan, connect, reconnect on drop, request MTU / high connection priority | any | TODO | |
+| B2d | Kotlin parser (pure, unit-tested against B2c fixtures) | any | DONE | desk |
+| B2e | Android BLE connection service: scan, connect, reconnect on drop, request MTU / high connection priority | any | DOING | desk |
 | B2f | Field test: log a drive, compare track/speed to AiM data | car | TODO | |
 
 > "Develop test app on PC first?" — **Yes, but small.** nRF Connect for poking,
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-27 · desk · B2a, B2d, B2e · RaceBox: UBX framer + 80 B Data Message parser (tested against the protocol doc's example packet), BLE client (MTU 517, high priority, DIS read, GNSS config query), Dev options → RaceBox test panel (live data, rate/gaps/checksum stats, CSV log). Sessions use the RaceBox as GPS when it's streaming, phone GPS otherwise. Not yet tried on the device. Skipped B2b/B2c (nRF Connect / PC prototype) — went straight to Kotlin with the doc's golden packet.
 - 2026-10-27 · desk · G2, L1, L2 · GUI skeleton per `design notes git ignore this/GUI design.txt`: Home (new/open session, settings, dev options, camera+GPS status), session folders (`Android/data/com.lunk333.whrrah/files/sessions/<event>_<date>/`), session screen with Define track (start/finish from GPS), runs list. Each camera recording = one run: GPS logged during it, clip matched by timestamp after stop, whole gyro pulled into the session. Phone GPS as stand-in source; lap time + sync offset are placeholders until RaceBox (B2/L3/I4). Old Data tab moved to Dev options. Not yet tried with the camera on the phone.
 - 2026-10-27 · desk · B1a, B1c–e · Proven on the Osmo Action 4: BLE pair → WiFi join → clip list → gyro, plus a REC indicator from WiFi status pushes and record start/stop over WiFi. Loop test: stop → new clip listed ≈15 s, 2 min clip gyro pull 6.6 s (2.2 ms/request, 4 parallel) — clip length doesn't matter. Camera can't record for ~9 s after each listing (viewer mode; Action 4 has no exit command). BLE R-SDK monitor tried and dropped (camera ignores DUML pairing on an R-SDK link). Phone needs AdGuard paused/excluded. Next: RaceBox (B2) + lap timing (L2/L3).
 - 2026-10-26 · desk · B1c–B1f · Camera tab in the app: BLE scan/pair → read WiFi creds → join AP → list clips → fetch gyro (window + parallelism selectable, shows ms/request = B1a measurement), CSV to Downloads/WHRRAH. Protocol code vendored from osmosis (MIT, `dev/konraditurbe/osmosis/`). Gyro decoder ported to Kotlin (B1f done: matches Python exactly on fixture + real 4.4 GB clip). **B1c–e untested on a real camera** — first thing to check with the Osmo. Target: basic lap timer + DJI + RaceBox for Sunday autox (2026-11-01).

@@ -10,6 +10,7 @@ import com.lunk333.whrrah.gps.GpsFix
 import com.lunk333.whrrah.gps.GpsSource
 import com.lunk333.whrrah.gps.PhoneGps
 import com.lunk333.whrrah.osmo.OsmoLink
+import com.lunk333.whrrah.racebox.RaceBox
 import com.lunk333.whrrah.settings.AppSettings
 import dev.konraditurbe.osmosis.core.CameraFile
 import java.io.BufferedWriter
@@ -39,8 +40,9 @@ class SessionController private constructor(context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     val phoneGps = PhoneGps(app)
-    /** Where fixes come from. The RaceBox (B2) takes over from the phone here when it's added. */
-    val gps: GpsSource get() = phoneGps
+    val raceBox = RaceBox.get(app)
+    /** Where fixes come from: the RaceBox when it's streaming, else the phone. */
+    val gps: GpsSource get() = if (raceBox.connected) raceBox else phoneGps
 
     var session by mutableStateOf<Session?>(null); private set
     /** One-line note on what the session machinery last did (shown on the session screen). */
@@ -52,7 +54,9 @@ class SessionController private constructor(context: Context) {
     init {
         link.onRecordingChanged = { e -> onRecordingChanged(e) }
         link.onFilesListed = { videos, _ -> matchClips(videos) }
-        phoneGps.onFix = ::onFix
+        // Both feed the log; phone fixes are dropped while the RaceBox is streaming.
+        phoneGps.onFix = { if (!raceBox.connected) onFix(it, phoneGps.name) }
+        raceBox.onFix = { onFix(it, raceBox.name) }
     }
 
     // ---- open / close ------------------------------------------------------------------------
@@ -67,7 +71,7 @@ class SessionController private constructor(context: Context) {
     fun close() {
         closeGpsLog()
         main.removeCallbacks(autoConnect)
-        gps.stop()
+        phoneGps.stop()   // the RaceBox link is left up — it's cheap and reconnecting takes a while
         session = null
         activity = ""
     }
@@ -80,7 +84,11 @@ class SessionController private constructor(context: Context) {
     }
 
     /** Start the GPS (call once location permission is granted). */
-    fun startGps() { if (session != null && settings.phoneGpsFallback) gps.start() }
+    fun startGps() {
+        if (session == null) return
+        raceBox.start()   // reconnects the remembered RaceBox, if any
+        if (settings.phoneGpsFallback) phoneGps.start()
+    }
 
     // ---- camera auto-connect -----------------------------------------------------------------
 
@@ -170,9 +178,9 @@ class SessionController private constructor(context: Context) {
         gpsLapN = 0
     }
 
-    private fun onFix(fix: GpsFix) {
+    private fun onFix(fix: GpsFix, source: String) {
         val w = gpsWriter ?: return
-        w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},${gps.name}\n")
+        w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n")
         val n = gpsLapN
         session?.let { s -> session = s.copy(laps = s.laps.map { if (it.n == n) it.copy(gpsFixes = it.gpsFixes + 1) else it }) }
     }

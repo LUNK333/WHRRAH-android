@@ -58,7 +58,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, SETTINGS, DEV, DEV_CAMERA, DEV_DATA }
+enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
 @Composable
@@ -80,7 +80,8 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
             Screen.OPEN_SESSION -> OpenSessionScreen(m, onOpened = { replace(Screen.SESSION) })
             Screen.SESSION -> SessionScreen(m, onClosed = ::back)
             Screen.SETTINGS -> SettingsScreen(m)
-            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onData = { go(Screen.DEV_DATA) })
+            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) })
+            Screen.DEV_RACEBOX -> com.lunk333.whrrah.racebox.RaceBoxScreen(m)
             Screen.DEV_CAMERA -> CameraScreen(m)
             Screen.DEV_DATA -> legacyData(m)
         }
@@ -95,6 +96,7 @@ private fun title(s: Screen) = when (s) {
     Screen.SETTINGS -> "Settings"
     Screen.DEV -> "Dev options"
     Screen.DEV_CAMERA -> "Camera test bench"
+    Screen.DEV_RACEBOX -> "RaceBox test panel"
     Screen.DEV_DATA -> "CSV / XRK viewer (legacy)"
 }
 
@@ -167,7 +169,7 @@ private fun ConnectionStatus() {
                 Dot(if (gps.connected) Color(0xFF43A047) else Color.Gray)
                 Text(
                     "GPS: " + (if (gps.connected && fix != null) "${gps.name}, ±%.0f m".format(fix.accuracyM ?: 0f)
-                    else "RaceBox not set up yet · ${gps.name} off"),
+                    else "no fix (RaceBox not connected, phone GPS off)"),
                     modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -375,7 +377,11 @@ private fun SettingsScreen(modifier: Modifier) {
             Text("Camera: " + (link.lastCamera?.name ?: "none — pair one in Dev options → Camera test bench"),
                 style = MaterialTheme.typography.bodyMedium)
         }
-        item { Text("RaceBox: not set up yet", style = MaterialTheme.typography.bodyMedium) }
+        item {
+            val rb = remember { com.lunk333.whrrah.racebox.RaceBox.get(context) }
+            Text("RaceBox: " + (rb.lastDevice?.name ?: "none — connect one in Dev options → RaceBox test panel"),
+                style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
@@ -407,9 +413,10 @@ private fun EditableList(title: String, values: List<String>, onAdd: (String) ->
 }
 
 @Composable
-private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onData: () -> Unit) {
+private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () -> Unit, onData: () -> Unit) {
     Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onCamera, modifier = Modifier.fillMaxWidth()) { Text("Camera test bench (pair, clips, gyro, loop tests)") }
+        Button(onClick = onRaceBox, modifier = Modifier.fillMaxWidth()) { Text("RaceBox test panel (connect, live data, CSV log)") }
         OutlinedButton(onClick = onData, modifier = Modifier.fillMaxWidth()) { Text("CSV / XRK viewer (legacy)") }
     }
 }

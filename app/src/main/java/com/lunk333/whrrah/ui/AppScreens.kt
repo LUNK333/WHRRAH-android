@@ -331,7 +331,8 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
             if (open || recording) {
                 if (!recording) {
                     Text("Start recording at the beginning of the course walk, then set the start and finish lines " +
-                        "as you reach them. Lines are %.0f ft wide (Settings), across your direction of travel.".format(widthFt),
+                        "as you reach them. Lines are %.0f ft wide (Settings), across your direction of travel. ".format(widthFt) +
+                        "To match official timing, nudge a line along the course: + is further down the course, − is back.",
                         style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { error = null; ctl.startTrackWalk(append = false) }) {
@@ -339,8 +340,8 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
                         }
                         if (s.trackWalkFile != null) OutlinedButton(onClick = { error = null; ctl.startTrackWalk(append = true) }) { Text("Continue walk") }
                     }
-                    TrackLineSummary("Start", s.start)
-                    TrackLineSummary("Finish", s.finish)
+                    TrackLineSummary("Start", s.start) { m, undo -> ctl.nudgeLine(true, m, undo) }
+                    TrackLineSummary("Finish", s.finish) { m, undo -> ctl.nudgeLine(false, m, undo) }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Dot(Color(0xFFE53935))
@@ -362,15 +363,26 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
 }
 
 @Composable
-private fun TrackLineSummary(label: String, l: TrackLine?) {
-    Text(
-        "$label: " + when {
-            l == null -> "not set"
-            l.headingDeg == null -> "point only — record a walk to set it as a line"
-            else -> "facing %.0f° · %.0f ft%s".format(l.headingDeg, l.widthM / Geo.FT, l.accuracyM?.let { " · ±%.1f m".format(it) } ?: "")
-        },
-        style = MaterialTheme.typography.bodySmall,
-    )
+private fun TrackLineSummary(label: String, l: TrackLine?, onNudge: (meters: Double, undo: Boolean) -> Unit) {
+    Column {
+        Text(
+            "$label: " + when {
+                l == null -> "not set"
+                l.headingDeg == null -> "point only — record a walk to set it as a line"
+                else -> "facing %.0f° · %.0f ft%s%s".format(l.headingDeg, l.widthM / Geo.FT,
+                    l.accuracyM?.let { " · ±%.1f m".format(it) } ?: "",
+                    if (l.nudgeM != 0.0) " · moved %+.0f m".format(l.nudgeM) else "")
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        // Calibration against official timing: slide the line along the course, keeping it square.
+        if (l?.headingDeg != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { onNudge(-1.0, false) }) { Text("− 1 m") }
+            Text("%+.0f m".format(l.nudgeM), style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = { onNudge(1.0, false) }) { Text("+ 1 m") }
+            if (l.nudgeM != 0.0) TextButton(onClick = { onNudge(0.0, true) }) { Text("Undo nudges") }
+        }
+    }
 }
 
 @Composable

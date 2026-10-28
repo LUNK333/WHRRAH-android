@@ -38,6 +38,29 @@ class GeoTest {
     }
 
     @Test
+    fun nudgeSlidesTheLineAlongItsHeadingAndStaysSquare() {
+        val set = TrackLine(lat0, lon0, 123.0, 20 * Geo.FT, 1f)
+        val fwd = set.nudged(1.0)
+        assertEquals(1.0, Geo.distance(set.lat, set.lon, fwd.lat, fwd.lon), 1e-6)
+        assertEquals(0.0, angleDiff(123.0, Geo.bearing(set.lat, set.lon, fwd.lat, fwd.lon)), 1e-3)   // forward = along the heading
+        assertEquals(set.headingDeg, fwd.headingDeg)
+        assertEquals(set.widthM, fwd.widthM, 0.0)
+        val (l, r) = fwd.endpoints()!!
+        assertEquals(0.0, angleDiff(123.0 + 90, Geo.bearing(l.lat, l.lon, r.lat, r.lon)), 1e-3)     // still square
+
+        val net = set.nudged(1.0).nudged(1.0).nudged(1.0).nudged(-1.0)
+        assertEquals(2.0, net.nudgeM, 0.0)
+        assertEquals(2.0, Geo.distance(set.lat, set.lon, net.lat, net.lon), 1e-6)
+        val undone = net.nudged(-net.nudgeM)
+        assertEquals(0.0, undone.nudgeM, 0.0)
+        assertEquals(0.0, Geo.distance(set.lat, set.lon, undone.lat, undone.lon), 1e-6)
+
+        assertEquals(net, TrackLine.fromJson(net.toJson()))
+        val pointOnly = TrackLine(lat0, lon0, null, 6.0, null)
+        assertEquals(pointOnly, pointOnly.nudged(1.0))   // nothing to slide along
+    }
+
+    @Test
     fun oldPointOnlyLinesLoadWithoutHeading() {
         val l = TrackLine.fromJson(JSONObject("""{"lat":42.1,"lon":-71.2,"accuracyM":5}"""))!!
         assertNull(l.headingDeg)

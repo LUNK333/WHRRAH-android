@@ -22,7 +22,19 @@ data class TrackLine(
     val accuracyM: Float?,
     /** How the heading was found, for display ("GPS heading at 1.2 m/s", "your last 6 m of movement"). */
     val headingSource: String? = null,
+    /** Net calibration nudge along [headingDeg] since the line was set, metres (+ = further along the course). */
+    val nudgeM: Double = 0.0,
 ) {
+    /**
+     * The same line moved [meters] along its heading (negative = back), still square to the heading.
+     * Used to calibrate against official timing. Point-only lines (no heading) can't be nudged.
+     */
+    fun nudged(meters: Double): TrackLine {
+        val h = headingDeg ?: return this
+        val c = Geo.offset(lat, lon, h, meters)
+        return copy(lat = c.lat, lon = c.lon, nudgeM = nudgeM + meters)
+    }
+
     /** The two ends of the line (left, right as seen travelling along [headingDeg]). Null without a heading. */
     fun endpoints(): Pair<Geo.LatLon, Geo.LatLon>? {
         val h = headingDeg ?: return null
@@ -30,7 +42,7 @@ data class TrackLine(
     }
 
     fun toJson(): JSONObject = JSONObject().put("lat", lat).put("lon", lon).put("widthM", widthM)
-        .putOpt("headingDeg", headingDeg).putOpt("headingSource", headingSource)
+        .putOpt("headingDeg", headingDeg).putOpt("headingSource", headingSource).put("nudgeM", nudgeM)
         .apply { accuracyM?.let { put("accuracyM", it.toDouble()) } }
 
     companion object {
@@ -42,6 +54,7 @@ data class TrackLine(
                 widthM = it.optDouble("widthM", 20 * Geo.FT),
                 accuracyM = if (it.has("accuracyM")) it.getDouble("accuracyM").toFloat() else null,
                 headingSource = it.optStringOrNull("headingSource"),
+                nudgeM = it.optDouble("nudgeM", 0.0),
             )
         }
     }

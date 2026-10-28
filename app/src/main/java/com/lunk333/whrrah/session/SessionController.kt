@@ -207,6 +207,16 @@ class SessionController private constructor(context: Context) {
      * Set the start (or finish) line: [AppSettings.lineWidthFt] wide, centred on the current fix,
      * at right angles to the direction of travel. Returns an error to show, or null on success.
      */
+    /** Move the start (or finish) line [meters] along its heading; 0 with [undo] puts it back where it was set. */
+    fun nudgeLine(start: Boolean, meters: Double, undo: Boolean = false) {
+        val s = session ?: return
+        val l = (if (start) s.start else s.finish) ?: return
+        val moved = l.nudged(if (undo) -l.nudgeM else meters)
+        update(if (start) s.copy(start = moved) else s.copy(finish = moved))
+        activity = (if (start) "Start" else "Finish") + " line " +
+            (if (moved.nudgeM == 0.0) "back where it was set" else "%+.0f m from where it was set".format(moved.nudgeM))
+    }
+
     fun setLine(start: Boolean): String? {
         val s = session ?: return "No session open"
         val fix = gps.lastFix ?: return "No GPS fix yet"

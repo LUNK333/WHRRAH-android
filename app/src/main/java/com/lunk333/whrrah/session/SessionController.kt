@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.lunk333.whrrah.gps.Geo
@@ -71,6 +72,7 @@ class SessionController private constructor(context: Context) {
     fun open(id: String): Boolean = store.load(id)?.also(::activate) != null
 
     fun close() {
+        stopTrackWalk()
         closeGpsLog()
         main.removeCallbacks(autoConnect)
         phoneGps.stop()   // the RaceBox link is left up — it's cheap and reconnecting takes a while
@@ -81,6 +83,7 @@ class SessionController private constructor(context: Context) {
     private fun activate(s: Session) {
         close()
         session = s
+        loadWalkPath(s)
         activity = "Session open — folder ${s.id}"
         com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
@@ -187,6 +190,10 @@ class SessionController private constructor(context: Context) {
     private fun onFix(fix: GpsFix, source: String) {
         recentFixes.addLast(fix)
         while (recentFixes.isNotEmpty() && fix.elapsedMs - recentFixes.first().elapsedMs > HeadingEstimator.WINDOW_MS + 2000) recentFixes.removeFirst()
+        walkWriter?.let { ww ->
+            runCatching { ww.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n") }
+            addWalkPoint(fix.lat, fix.lon, fix.accuracyM)
+        }
         val w = gpsWriter ?: return
         w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n")
         val n = gpsLapN
@@ -212,6 +219,68 @@ class SessionController private constructor(context: Context) {
         return null
     }
 
+    // ---- track walk --------------------------------------------------------------------------
+
+    /** True while the course walk is being recorded (the start/finish buttons are shown then). */
+    var walkRecording by mutableStateOf(false); private set
+    /** The walk trace for the sketch, thinned to points >= [WALK_SPACING_M] apart. */
+    val walkPath = mutableStateListOf<Geo.LatLon>()
+    var walkDistanceM by mutableStateOf(0.0); private set
+    private var walkWriter: BufferedWriter? = null
+
+    /** Start recording the course walk. [append] continues the existing trace instead of starting over. */
+    fun startTrackWalk(append: Boolean) {
+        val s = session ?: return
+        stopTrackWalk()
+        startGps()
+        val f = File(store.gpsDir(s.id), WALK_FILE)
+        val keep = append && f.isFile
+        if (!keep) { walkPath.clear(); walkDistanceM = 0.0 }
+        walkWriter = java.io.FileWriter(f, keep).buffered().also {
+            if (!keep) it.write("elapsed_ms,utc_ms,lat,lon,speed_mps,heading_deg,accuracy_m,source\n")
+        }
+        walkRecording = true
+        update(s.copy(trackWalkFile = WALK_FILE))
+        activity = if (keep) "Track walk: continuing" else "Track walk: recording — set the start and finish lines as you reach them"
+    }
+
+    fun stopTrackWalk() {
+        val w = walkWriter ?: return
+        runCatching { w.close() }
+        walkWriter = null
+        walkRecording = false
+        activity = "Track walk saved (%.0f m)".format(walkDistanceM)
+    }
+
+    private fun addWalkPoint(lat: Double, lon: Double, accuracyM: Float? = null) {
+        if (accuracyM != null && accuracyM > WALK_MAX_ACCURACY_M) return   // too vague to draw
+        val last = walkPath.lastOrNull()
+        if (last == null) { walkPath.add(Geo.LatLon(lat, lon)); return }
+        val d = Geo.distance(last.lat, last.lon, lat, lon)
+        if (d > WALK_MAX_JUMP_M) {
+            // Nobody walks 100 m between fixes: one end is a bad fix. Early on it's the start (a stale
+            // first fix), so restart the trace; later, drop the outlier.
+            if (walkPath.size <= 3) { walkPath.clear(); walkPath.add(Geo.LatLon(lat, lon)); walkDistanceM = 0.0 }
+            return
+        }
+        if (d >= WALK_SPACING_M) { walkPath.add(Geo.LatLon(lat, lon)); walkDistanceM += d }
+    }
+
+    /** Re-read a saved walk so the sketch shows it when the session is reopened. */
+    private fun loadWalkPath(s: Session) {
+        walkPath.clear(); walkDistanceM = 0.0
+        val f = File(store.gpsDir(s.id), s.trackWalkFile ?: return)
+        if (!f.isFile) return
+        runCatching {
+            f.useLines { lines ->
+                lines.drop(1).forEach { line ->
+                    val c = line.split(',')
+                    if (c.size >= 7) addWalkPoint(c[2].toDouble(), c[3].toDouble(), c[6].toFloatOrNull())
+                }
+            }
+        }
+    }
+
     /** Current position + travel direction, for the track sketch. */
     val currentFix: GpsFix? get() = gps.lastFix
 
@@ -226,6 +295,10 @@ class SessionController private constructor(context: Context) {
 
     companion object {
         private const val AUTO_CONNECT_MS = 20_000L
+        private const val WALK_FILE = "trackwalk.csv"
+        private const val WALK_SPACING_M = 1.0
+        private const val WALK_MAX_ACCURACY_M = 25f
+        private const val WALK_MAX_JUMP_M = 100.0
         /** A clip starts within this of the recording-start push (the camera's clock is set from the phone's). */
         private const val CLIP_MATCH_MS = 20_000L
 

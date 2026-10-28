@@ -279,7 +279,7 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
         item { ConnectionStatus() }
         if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
 
-        item { TrackCard(s, fix = ctl.currentFix, widthFt = AppSettings.get(context).lineWidthFt, onSet = { ctl.setLine(it) }) }
+        item { TrackCard(ctl, s, fix = ctl.currentFix, widthFt = AppSettings.get(context).lineWidthFt) }
 
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -311,27 +311,66 @@ private fun Stat(label: String, value: String) {
 }
 
 @Composable
-private fun TrackCard(s: Session, fix: GpsFix?, widthFt: Float, onSet: (start: Boolean) -> String?) {
+private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt: Float) {
     var open by remember { mutableStateOf(!s.trackDefined) }
     var error by remember { mutableStateOf<String?>(null) }
+    val recording = ctl.walkRecording
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Track" + if (s.trackDefined) " — defined" else " — not defined", style = MaterialTheme.typography.titleSmall)
-                TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Define track") }
+                Text(
+                    "Track" + when {
+                        recording -> " — recording walk"
+                        s.trackDefined -> " — defined"
+                        else -> " — not defined"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                if (!recording) TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
             }
-            if (open) {
-                Text("Course walk: walk toward each line in the driving direction, stop on it, tap. " +
-                    "The line is %.0f ft wide (Settings), centred on you, across your direction of travel.".format(widthFt),
-                    style = MaterialTheme.typography.bodySmall)
-                TrackLineRow("Start", s.start, fix != null) { error = onSet(true) }
-                TrackLineRow("Finish", s.finish, fix != null) { error = onSet(false) }
-                if (fix == null) Text("Waiting for a GPS fix…", style = MaterialTheme.typography.bodySmall)
+            if (open || recording) {
+                if (!recording) {
+                    Text("Start recording at the beginning of the course walk, then set the start and finish lines " +
+                        "as you reach them. Lines are %.0f ft wide (Settings), across your direction of travel.".format(widthFt),
+                        style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { error = null; ctl.startTrackWalk(append = false) }) {
+                            Text(if (s.trackWalkFile == null) "Record track walk" else "Record new walk")
+                        }
+                        if (s.trackWalkFile != null) OutlinedButton(onClick = { error = null; ctl.startTrackWalk(append = true) }) { Text("Continue walk") }
+                    }
+                    TrackLineSummary("Start", s.start)
+                    TrackLineSummary("Finish", s.finish)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Dot(Color(0xFFE53935))
+                        Text("Recording · %.0f m walked".format(ctl.walkDistanceM) +
+                            (fix?.accuracyM?.let { " · GPS ±%.1f m".format(it) } ?: " · waiting for GPS"),
+                            modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Text("Walk toward each line in the driving direction, stop on it, tap.", style = MaterialTheme.typography.bodySmall)
+                    TrackLineRow("Start", s.start, fix != null) { error = ctl.setLine(true) }
+                    TrackLineRow("Finish", s.finish, fix != null) { error = ctl.setLine(false) }
+                    OutlinedButton(onClick = ctl::stopTrackWalk) { Text("Stop recording") }
+                }
                 error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE0A000)) }
-                if (s.start != null || s.finish != null || fix != null) TrackSketch(s.start, s.finish, fix)
+                if (s.start != null || s.finish != null || ctl.walkPath.isNotEmpty() || recording)
+                    TrackSketch(s.start, s.finish, ctl.walkPath, if (recording) fix else null)
             }
         }
     }
+}
+
+@Composable
+private fun TrackLineSummary(label: String, l: TrackLine?) {
+    Text(
+        "$label: " + when {
+            l == null -> "not set"
+            l.headingDeg == null -> "point only — record a walk to set it as a line"
+            else -> "facing %.0f° · %.0f ft%s".format(l.headingDeg, l.widthM / Geo.FT, l.accuracyM?.let { " · ±%.1f m".format(it) } ?: "")
+        },
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @Composable
@@ -358,8 +397,9 @@ private fun TrackLineRow(label: String, l: TrackLine?, canSet: Boolean, onSet: (
  * direction, and the current position as a dot. Scaled to fit; just a sanity check on the walk.
  */
 @Composable
-private fun TrackSketch(start: TrackLine?, finish: TrackLine?, fix: GpsFix?) {
+private fun TrackSketch(start: TrackLine?, finish: TrackLine?, walk: List<Geo.LatLon>, fix: GpsFix?) {
     val pts = buildList {
+        addAll(walk)
         for (l in listOfNotNull(start, finish)) { add(Geo.LatLon(l.lat, l.lon)); l.endpoints()?.let { add(it.first); add(it.second) } }
         fix?.let { add(Geo.LatLon(it.lat, it.lon)) }
     }
@@ -374,6 +414,12 @@ private fun TrackSketch(start: TrackLine?, finish: TrackLine?, fix: GpsFix?) {
         fun xy(p: Geo.LatLon): androidx.compose.ui.geometry.Offset {
             val (e, n) = Geo.toLocal(oLat, oLon, p.lat, p.lon)
             return androidx.compose.ui.geometry.Offset(size.width / 2 + (e * scale).toFloat(), size.height / 2 - (n * scale).toFloat())
+        }
+        // Walk trace underneath the lines.
+        if (walk.size > 1) {
+            val path = androidx.compose.ui.graphics.Path()
+            walk.forEachIndexed { i, p -> val o = xy(p); if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y) }
+            drawPath(path, onSurface.copy(alpha = 0.35f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
         }
         for ((l, c) in listOf(start to Color(0xFF43A047), finish to Color(0xFFE53935))) {
             if (l == null) continue
@@ -390,7 +436,7 @@ private fun TrackSketch(start: TrackLine?, finish: TrackLine?, fix: GpsFix?) {
         val bar = (10 * scale).toFloat()
         drawLine(onSurface, androidx.compose.ui.geometry.Offset(8f, size.height - 8f), androidx.compose.ui.geometry.Offset(8f + bar, size.height - 8f), strokeWidth = 3f)
     }
-    Text("north up · bar = 10 m · dot = you", style = MaterialTheme.typography.bodySmall)
+    Text("north up · bar = 10 m · grey = walk" + if (fix != null) " · dot = you" else "", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

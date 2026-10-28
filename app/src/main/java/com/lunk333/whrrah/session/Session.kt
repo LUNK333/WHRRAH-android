@@ -107,6 +107,8 @@ data class Session(
     val start: TrackLine? = null,
     val finish: TrackLine? = null,
     val laps: List<Lap> = emptyList(),
+    /** GPS trace of the course walk, in the session's gps/ folder, once one has been recorded. */
+    val trackWalkFile: String? = null,
 ) {
     val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
     val bestLapMs: Long? get() = laps.mapNotNull { it.lapTimeMs }.minOrNull()
@@ -115,7 +117,7 @@ data class Session(
         .put("version", 1)
         .put("id", id).put("event", event).put("date", date).put("driver", driver).put("car", car)
         .put("createdMs", createdMs)
-        .putOpt("start", start?.toJson()).putOpt("finish", finish?.toJson())
+        .putOpt("start", start?.toJson()).putOpt("finish", finish?.toJson()).putOpt("trackWalkFile", trackWalkFile)
         .put("laps", JSONArray().apply { laps.forEach { put(it.toJson()) } })
 
     companion object {
@@ -128,6 +130,7 @@ data class Session(
             createdMs = o.getLong("createdMs"),
             start = TrackLine.fromJson(o.optJSONObject("start")),
             finish = TrackLine.fromJson(o.optJSONObject("finish")),
+            trackWalkFile = o.optStringOrNull("trackWalkFile"),
             laps = o.optJSONArray("laps")?.let { a -> List(a.length()) { Lap.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
 

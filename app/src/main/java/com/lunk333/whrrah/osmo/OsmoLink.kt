@@ -180,6 +180,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         ssid = name
         prefs.edit().putString("last_name", name).apply()
         setPhase(Phase.CONNECTING, "Connecting to $addr over BLE…")
+        com.lunk333.whrrah.LinkService.update(context)
         gatt = GattClient(context, this).also { it.connect(adapter.getRemoteDevice(addr)) }
     }
 

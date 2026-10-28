@@ -126,6 +126,7 @@ class RaceBox private constructor(private val context: Context) : GpsSource {
         prefs.edit().putString("addr", addr).putString("name", devName).apply()
         wantLink = true
         open(addr)
+        com.lunk333.whrrah.LinkService.update(context)
     }
 
     private fun open(addr: String) {

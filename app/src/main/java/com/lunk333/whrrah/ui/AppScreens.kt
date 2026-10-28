@@ -111,9 +111,14 @@ private fun Header(title: String, showBack: Boolean, onBack: () -> Unit) {
 
 // ---- shared bits -----------------------------------------------------------------------------
 
-private val PERMS: Array<String> = if (Build.VERSION.SDK_INT >= 31)
-    arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.ACCESS_FINE_LOCATION)
-else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+private val PERMS: Array<String> = when {
+    // Notifications: the background-connection notification (LinkService) is hidden without it.
+    Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
+    Build.VERSION.SDK_INT >= 31 -> arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_FINE_LOCATION)
+    else -> arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+}
 
 /** Bluetooth (camera) + location (GPS) permissions; [onGranted] runs once they're all in. */
 @Composable

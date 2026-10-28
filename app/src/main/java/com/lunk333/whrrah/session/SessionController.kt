@@ -80,6 +80,7 @@ class SessionController private constructor(context: Context) {
         close()
         session = s
         activity = "Session open — folder ${s.id}"
+        com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
     }
 

@@ -82,12 +82,25 @@ class SessionController private constructor(context: Context) {
 
     private fun activate(s: Session) {
         close()
-        session = s
+        // A run still "recording" on open was cut off (app killed or crashed mid-run): its GPS log
+        // stopped then, so close it at its last fix (or its start) rather than leave it running.
+        val stale = s.laps.filter { it.recording }
+        session = if (stale.isEmpty()) s else s.copy(laps = s.laps.map { lap ->
+            if (!lap.recording) lap else lap.copy(recStopWallMs = lastFixWallMs(s, lap) ?: lap.recStartWallMs,
+                note = lap.note ?: "interrupted — the app was closed mid-run")
+        }).also { store.save(it) }
         loadWalkPath(s)
         activity = "Session open — folder ${s.id}"
         com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
     }
+
+    /** Wall-clock time of the last fix in a run's GPS log (its utc_ms column), if it has any. */
+    private fun lastFixWallMs(s: Session, lap: Lap): Long? = runCatching {
+        File(store.gpsDir(s.id), lap.gpsFile ?: return null).useLines { lines ->
+            lines.drop(1).lastOrNull()?.split(',')?.getOrNull(1)?.toLongOrNull()?.takeIf { it > 0 }
+        }
+    }.getOrNull()
 
     /** Start the GPS (call once location permission is granted). */
     fun startGps() {
@@ -114,18 +127,50 @@ class SessionController private constructor(context: Context) {
     // ---- laps --------------------------------------------------------------------------------
 
     private fun onRecordingChanged(e: OsmoLink.RecordEvent) {
-        val s = session ?: return
-        if (e.started) {
-            val lap = Lap(n = s.laps.size + 1, recStartWallMs = e.wallMs)
-            update(s.copy(laps = s.laps + lap))
-            openGpsLog(lap.n)
-            activity = "Run ${lap.n} recording — logging ${gps.name}"
-        } else {
-            val open = s.laps.lastOrNull { it.recording } ?: return
-            closeGpsLog()
-            updateLap(open.n) { it.copy(recStopWallMs = e.wallMs) }
-            activity = "Run ${open.n} stopped — waiting for the clip to show up on the camera"
+        if (e.started) beginRun(e.wallMs, manual = false) else endRun(e.wallMs, fromCamera = true)
+    }
+
+    /** The run in progress, if any. */
+    val currentRun: Lap? get() = session?.laps?.lastOrNull { it.recording }
+
+    /** Phone button: start a run without the camera (e.g. camera not connected). */
+    fun startRunFromPhone() {
+        beginRun(System.currentTimeMillis(), manual = true)
+        val n = currentRun?.n ?: return
+        // Also start the camera if it's on WiFi. Its "recording started" push then joins this run,
+        // and the run is treated as a camera run (clip matched, gyro pulled) from here on.
+        if (link.canControlRecording && link.recording != true) {
+            activity = "Run $n recording — starting the camera…"
+            link.setRecording(true) { ok, detail ->
+                if (ok) updateLap(n) { it.copy(manual = false) }
+                activity = if (ok) "Run $n recording — camera recording too" else "Run $n recording — camera didn't start ($detail)"
+            }
         }
+    }
+
+    /** Phone button: end the run in progress, whoever started it (and stop the camera if it's recording). */
+    fun stopRunFromPhone() {
+        val stopCamera = link.canControlRecording && link.recording == true
+        endRun(System.currentTimeMillis(), fromCamera = stopCamera)
+        if (stopCamera) link.setRecording(false) { ok, detail -> if (!ok) activity = "Camera didn't stop recording ($detail) — stop it on the camera" }
+    }
+
+    private fun beginRun(wallMs: Long, manual: Boolean) {
+        val s = session ?: return
+        // One run at a time: a camera start during a phone-started run (or vice versa) joins it.
+        currentRun?.let { activity = "Run ${it.n} already recording"; return }
+        val lap = Lap(n = s.laps.size + 1, recStartWallMs = wallMs, manual = manual)
+        update(s.copy(laps = s.laps + lap))
+        openGpsLog(lap.n)
+        activity = "Run ${lap.n} recording — logging ${gps.name}"
+    }
+
+    private fun endRun(wallMs: Long, fromCamera: Boolean) {
+        val open = currentRun ?: return
+        // A camera stop ends a phone-started run too, but a phone-started run doesn't wait for a clip.
+        closeGpsLog()
+        updateLap(open.n) { it.copy(recStopWallMs = wallMs) }
+        activity = "Run ${open.n} stopped" + if (fromCamera || !open.manual) " — waiting for the clip to show up on the camera" else ""
     }
 
     /** Give each finished lap the clip whose start time matches its recording start. */
@@ -147,13 +192,13 @@ class SessionController private constructor(context: Context) {
     private fun fetchNextGyro() {
         if (!settings.autoFetchGyro) return
         val s = session ?: return
-        val lap = s.laps.firstOrNull { it.clip != null && it.gyroFile == null && it.note == null } ?: return
+        val lap = s.laps.firstOrNull { it.clip != null && it.gyroFile == null && it.note != NO_GYRO_NOTE } ?: return
         val f = link.files.firstOrNull { it.name == lap.clip } ?: return
         val out = File(store.gyroDir(s.id), "lap%02d_%s.csv".format(lap.n, f.name.substringBeforeLast('.')))
         val started = link.fetchGyroTo(f, out) { r ->
             r.onSuccess { g ->
                 updateLap(lap.n) { it.copy(gyroFile = out.name, gyroSamples = g.samples.size,
-                    note = if (g.samples.size == 0) "clip has no gyro (recording format)" else null) }
+                    note = if (g.samples.size == 0) NO_GYRO_NOTE else it.note) }
                 activity = "Run ${lap.n}: gyro saved (${g.samples.size} samples, %.1f s)".format(g.seconds)
             }.onFailure { activity = "Run ${lap.n}: gyro fetch failed (${it.message}) — will retry" }
             main.postDelayed(::fetchNextGyro, if (r.isSuccess) 0 else 5000)
@@ -305,6 +350,7 @@ class SessionController private constructor(context: Context) {
 
     companion object {
         private const val AUTO_CONNECT_MS = 20_000L
+        private const val NO_GYRO_NOTE = "clip has no gyro (recording format)"
         private const val WALK_FILE = "trackwalk.csv"
         private const val WALK_SPACING_M = 1.0
         private const val WALK_MAX_ACCURACY_M = 25f

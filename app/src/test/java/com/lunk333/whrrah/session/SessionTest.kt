@@ -34,7 +34,7 @@ class SessionTest {
             laps = listOf(
                 Lap(1, 1000, 2000, clip = "DJI_x.MP4", gyroFile = "lap01.csv", gyroSamples = 120445, gpsFile = "lap01.csv",
                     gpsFixes = 42, lapTimeMs = 61234, syncOffsetMs = -350, note = "n"),
-                Lap(2, 3000),
+                Lap(2, 3000, manual = true),
             ),
         )
         store.save(full)

@@ -81,6 +81,8 @@ data class Lap(
     /** Video-to-data offset from gyro correlation. Needs RaceBox IMU (I2/I4). */
     val syncOffsetMs: Long? = null,
     val note: String? = null,
+    /** Started from the phone's Start run button rather than by the camera recording. */
+    val manual: Boolean = false,
 ) {
     val recording: Boolean get() = recStopWallMs == null
 
@@ -89,7 +91,7 @@ data class Lap(
         .putOpt("recStopWallMs", recStopWallMs).putOpt("clip", clip)
         .putOpt("gyroFile", gyroFile).putOpt("gyroSamples", gyroSamples)
         .putOpt("gpsFile", gpsFile).put("gpsFixes", gpsFixes)
-        .putOpt("lapTimeMs", lapTimeMs).putOpt("syncOffsetMs", syncOffsetMs).putOpt("note", note)
+        .putOpt("lapTimeMs", lapTimeMs).putOpt("syncOffsetMs", syncOffsetMs).putOpt("note", note).put("manual", manual)
 
     companion object {
         fun fromJson(o: JSONObject) = Lap(
@@ -104,6 +106,7 @@ data class Lap(
             lapTimeMs = o.optLongOrNull("lapTimeMs"),
             syncOffsetMs = o.optLongOrNull("syncOffsetMs"),
             note = o.optStringOrNull("note"),
+            manual = o.optBoolean("manual", false),
         )
     }
 }

@@ -287,6 +287,7 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
                 Stat("Best", formatLap(s.bestLapMs))
             }
         }
+        item { RunButton(ctl) }
         item {
             Text("Start recording from the mic remote ~30 s before the start line and stop ~30 s after the finish — each recording is one run.",
                 style = MaterialTheme.typography.bodySmall)
@@ -457,7 +458,8 @@ private fun LapRow(lap: Lap) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Run ${lap.n}" + if (lap.recording) "  ● recording" else "", style = MaterialTheme.typography.titleMedium)
+                Text("Run ${lap.n}" + (if (lap.manual) " (phone)" else "") + if (lap.recording) "  ● recording" else "",
+                    style = MaterialTheme.typography.titleMedium)
                 Text(formatLap(lap.lapTimeMs), style = MaterialTheme.typography.titleMedium)
             }
             val recLen = lap.recStopWallMs?.let { "%d s".format((it - lap.recStartWallMs) / 1000) }
@@ -465,7 +467,7 @@ private fun LapRow(lap: Lap) {
                 "GPS ${lap.gpsFixes} fixes").joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             Text(
                 listOf(
-                    "clip " + (lap.clip ?: if (lap.recording) "—" else "waiting…"),
+                    "clip " + (lap.clip ?: if (lap.recording || lap.manual) "—" else "waiting…"),
                     "gyro " + (lap.gyroSamples?.let { "✓ $it" } ?: if (lap.clip != null) "pending" else "—"),
                     "sync " + (lap.syncOffsetMs?.let { "%+d ms".format(it) } ?: "— (needs RaceBox)"),
                 ).joinToString(" · "),
@@ -552,5 +554,29 @@ private fun LineWidthSetting(settings: AppSettings) {
             }
             Text("Applies to lines set from now on; reset a line to apply a new width to it.", style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+/**
+ * Start/stop a run from the phone — for testing without the camera. Normally the camera's recording
+ * (from the mic remote) starts and stops runs on its own.
+ */
+@Composable
+private fun RunButton(ctl: SessionController) {
+    val run = ctl.currentRun
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(run?.n) { while (run != null) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(500) } }
+    if (run == null) {
+        val context = LocalContext.current
+        val link = remember { OsmoLink.get(context) }
+        OutlinedButton(onClick = ctl::startRunFromPhone, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+            Text(if (link.canControlRecording) "Start run + camera recording" else "Start run (phone only — camera not on WiFi)")
+        }
+    } else {
+        val secs = ((now - run.recStartWallMs) / 1000).coerceAtLeast(0)
+        Button(
+            onClick = ctl::stopRunFromPhone, modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+        ) { Text("Stop run ${run.n}  ·  %d:%02d  ·  %d GPS fixes".format(secs / 60, secs % 60, run.gpsFixes)) }
     }
 }

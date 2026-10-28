@@ -458,6 +458,37 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         }.apply { isDaemon = true }.start()
     }
 
+    /** Whether start/stop recording can be sent right now (camera on WiFi with a live datalink). */
+    val canControlRecording: Boolean get() = session != null && phase == Phase.READY
+
+    /**
+     * Start ([start] = true) or stop camera recording over WiFi. A start first waits out viewer mode
+     * (the camera rejects it for ~9 s after a listing) and retries; [onDone] gets (ok, detail) on the
+     * main thread. The recording-state push then fires [onRecordingChanged] as usual.
+     */
+    fun setRecording(start: Boolean, onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        val s = session ?: return onDone(false, "camera not connected over WiFi")
+        Thread {
+            if (start && playbackFlag == true) {
+                logLine("record: camera in viewer mode — waiting for it to drop back to capture")
+                val end = SystemClock.elapsedRealtime() + 20_000
+                while (playbackFlag == true && SystemClock.elapsedRealtime() < end) Thread.sleep(100)
+            }
+            var reply: ByteArray? = null
+            for (attempt in 1..5) {
+                reply = s.runCommand(0x02, 0x02, byteArrayOf(if (start) 1 else 0), receiverType = 0x01, receiverId = 0)
+                if (reply?.firstOrNull()?.toInt() == 0) break
+                // Already in the state we asked for: stop while not recording / start while recording.
+                if (recFlag == start) break
+                Thread.sleep(1000)
+            }
+            val ok = reply?.firstOrNull()?.toInt() == 0 || recFlag == start
+            val detail = reply?.let { replyName(it) } ?: "no reply"
+            logLine("record: ${if (start) "start" else "stop"} → $detail")
+            main.post { onDone(ok, detail) }
+        }.apply { isDaemon = true }.start()
+    }
+
     private fun replyName(r: ByteArray): String = when (r.firstOrNull()?.toInt()?.and(0xFF)) {
         0x00 -> "ok"; 0xD9 -> "wrong state (d9)"; 0xDF -> "bad param (df)"; 0xE0 -> "not supported (e0)"
         null -> "empty"; else -> "0x%02x".format(r[0])

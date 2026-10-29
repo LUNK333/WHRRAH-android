@@ -48,7 +48,9 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
 
     /**
      * The camera's capture setup from its status push (DJI `camera_status_push_command_frame`):
-     * mode @0, video_resolution @2, fps_idx @3, eis_mode @4, fov_type @7 (DJI calls it reserved).
+     * mode @0, video_resolution @2, fps_idx @3, eis_mode @4, fov_type @7. On the Action 4 fov_type is
+     * always 0 (DJI marks it reserved) and no other byte moves with FOV or color mode (checked
+     * 2026-10-29), so FOV can't be checked over Bluetooth.
      */
     data class Setup(val mode: Int, val resolution: Int, val fps: Int, val eis: Int, val fov: Int) {
         val modeName: String get() = MODE_NAMES[mode] ?: "mode 0x%02X".format(mode)
@@ -73,7 +75,6 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
         if (s.eis != 0) out.add("Stabilization is on (${s.eisName}) — turn it off, or the clip has no usable gyro")
         val g = goodSetup
         if (g != null && s.mode == g.mode) {
-            if (s.fov != g.fov) out.add("Field of view changed from your saved setup — set it back to Wide")
             if (s.resolution != g.resolution || s.fps != g.fps) out.add("Resolution / frame rate changed from your saved setup")
         }
         return out

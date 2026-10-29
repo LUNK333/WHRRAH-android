@@ -307,7 +307,7 @@ private fun BleMonitorCard() {
                 mon.battery.takeIf { it in 0..100 }?.let { "battery $it%" }).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall)
             mon.setup?.let { su ->
-                Text("Setup: ${su.modeName} · stabilization ${su.eisName} · res ${su.resolution} · fps ${su.fps} · fov ${su.fov}" +
+                Text("Setup: ${su.modeName} · stabilization ${su.eisName} · res ${su.resolution} · fps ${su.fps} (FOV isn't reported)" +
                     (mon.goodSetup?.let { if (it == su) " · matches saved" else " · differs from saved" } ?: " · nothing saved"),
                     style = MaterialTheme.typography.bodySmall)
                 mon.problems.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = androidx.compose.ui.graphics.Color(0xFFC62828)) }

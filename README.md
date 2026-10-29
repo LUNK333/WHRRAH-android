@@ -86,7 +86,7 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ~/.gradle/wrapper/dists/
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Unit tests (JVM, ~90) cover the parts that can be pinned down off-device: the gyro
+Unit tests (JVM, 83) cover the parts that can be pinned down off-device: the gyro
 decoder against the Python reference (fixture built by `tools/make_gyro_fixture.py`
 from a real clip), UBX/RaceBox parsing against the protocol doc's example packet,
 line geometry and heading, path-following nudges, lap timing, clip matching, gyro

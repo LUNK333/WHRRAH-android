@@ -95,9 +95,31 @@ class SessionController private constructor(context: Context) {
                 note = lap.note ?: "interrupted — the app was closed mid-run")
         }).also { store.save(it) }
         loadWalkPath(s)
+        retimeAll()
         activity = "Session open — folder ${s.id}"
         com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
+    }
+
+    // ---- lap timing ----------------------------------------------------------------------------
+
+    /** Time one finished run from its GPS log against the current start/finish lines. */
+    private fun timeRun(n: Int) {
+        val s = session ?: return
+        val lap = s.laps.firstOrNull { it.n == n && !it.recording } ?: return
+        val fixes = lap.gpsFile?.let { LapTimer.readGpsCsv(File(store.gpsDir(s.id), it)) } ?: emptyList()
+        val r = LapTimer.time(fixes, s.start, s.finish)
+        updateLap(n) { it.copy(lapTimeMs = r.lapTimeMs, startCrossMs = r.startMs, finishCrossMs = r.finishMs, timingNote = r.note) }
+        if (r.lapTimeMs != null) activity = "Run $n: %d:%06.3f".format(r.lapTimeMs / 60000, (r.lapTimeMs % 60000) / 1000.0)
+    }
+
+    /** Re-time every finished run (after a line is set or nudged, or when the session opens). */
+    fun retimeAll() {
+        val s = session ?: return
+        if (!s.trackDefined) return
+        s.laps.filter { !it.recording }.forEach { timeRun(it.n) }
+        val timed = session?.laps?.count { it.lapTimeMs != null } ?: 0
+        if (s.laps.isNotEmpty()) activity = "Re-timed ${s.laps.count { !it.recording }} runs — $timed have times"
     }
 
     /** Wall-clock time of the last fix in a run's GPS log (its utc_ms column), if it has any. */
@@ -190,6 +212,7 @@ class SessionController private constructor(context: Context) {
         // A camera stop ends a phone-started run too, but a phone-started run doesn't wait for a clip.
         closeGpsLog()
         updateLap(open.n) { it.copy(recStopWallMs = wallMs) }
+        timeRun(open.n)
         activity = "Run ${open.n} stopped" + if (fromCamera || open.expectsClip) " — clip gets matched when you tap Match clips" else ""
     }
 
@@ -349,6 +372,7 @@ class SessionController private constructor(context: Context) {
         val path = TrackPath(walkPath.toList()).takeIf { it.usable }
         val moved = l.nudged(if (undo) -l.nudgeM else meters, path)
         update(if (start) s.copy(start = moved) else s.copy(finish = moved))
+        retimeAll()
         activity = (if (start) "Start" else "Finish") + " line " +
             (if (moved.nudgeM == 0.0) "back where it was set" else "%+.0f m from where it was set".format(moved.nudgeM))
     }
@@ -361,6 +385,7 @@ class SessionController private constructor(context: Context) {
         val line = TrackLine(fix.lat, fix.lon, est.headingDeg, settings.lineWidthFt * Geo.FT, fix.accuracyM, est.how,
             setLat = fix.lat, setLon = fix.lon, setHeadingDeg = est.headingDeg)
         update(if (start) s.copy(start = line) else s.copy(finish = line))
+        retimeAll()
         activity = (if (start) "Start" else "Finish") + " line set: %.0f ft wide, facing %.0f° (from %s, ±%.1f m)"
             .format(settings.lineWidthFt, est.headingDeg, est.how, fix.accuracyM ?: 0f)
         return null

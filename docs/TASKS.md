@@ -119,7 +119,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 |---|---|---|---|---|
 | L1 | Session storage on device: list/rename/delete sessions, export CSV (same format the CSV importer reads) | any | TODO | |
 | L2 | Track definitions: start/finish line (+ optional splits) set on a map or by "drop line here" while parked on it; saved per track | any | DONE | desk |
-| L3 | Lap detection from RaceBox GPS: line-crossing with interpolation between fixes for sub-sample timing | any | TODO | |
+| L3 | Lap detection from RaceBox GPS: line-crossing with interpolation between fixes for sub-sample timing | any | DONE | desk |
 | L4 | Check lap times vs AiM Solo on the same session (run both in car once) | car | TODO | |
 | L5 | Keep logging alive with screen off / app in background (foreground service, wake lock, BLE reconnect) | any | TODO | |
 | L6 | v2: live in-car display — current/last/best lap, predictive delta | any | TODO | |
@@ -164,6 +164,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-28 · desk · L3 · Lap timing: forward crossings of the start/finish lines within their width, interpolated between fixes on GNSS time; last start before the first finish (staging creep ignored); 3 s dropout limit; <2 Hz flagged rough. Times on stop, re-times all runs on line set/nudge and session open. Emulator drive matched an independent calc to the ms (17.073 s). Next: I4 sync offset (clip gyro vs RaceBox rotation rates).
 - 2026-10-28 · desk · B1 · Sessions use the camera over Bluetooth only (DJI R-SDK remote): record start/stop + status work on the Action 4. Match clips = one WiFi visit after the event (48 s for 3 clips): ClipMatcher found the camera clock 14.3 s fast and matched all 3 runs within the 1 s filename precision. The camera ignores media pairing after being used as a remote, so the WiFi join relies on the saved SSID/password (re-pair in the test bench if the camera's WiFi is reset).
 - 2026-10-27 · desk · — · Test drive (daily car): GPS trace good. Wireless Android Auto + camera WiFi fight, neither works — parked as B1h (no AA in the track car).
 - 2026-10-27 · desk · L2 · Start/finish are now lines: width from Settings (default 20 ft), centred on the fix, square to the direction of travel (GPS heading when moving >0.5 m/s, else bearing of the last ≥5 m walked in 30 s). Track sketch on the session screen. Next: L3 lap timing = crossing detection against these lines.

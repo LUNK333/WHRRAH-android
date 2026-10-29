@@ -481,6 +481,8 @@ private fun LapRow(lap: Lap) {
                 style = MaterialTheme.typography.bodySmall,
             )
             lap.note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE0A000)) }
+            lap.timingNote?.let { Text("timing: $it", style = MaterialTheme.typography.bodySmall,
+                color = if (lap.lapTimeMs == null) Color.Gray else Color(0xFFE0A000)) }
         }
     }
 }

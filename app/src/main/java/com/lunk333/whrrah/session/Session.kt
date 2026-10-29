@@ -128,6 +128,11 @@ data class Lap(
     val clipDurationS: Int? = null,
     /** Clip start − run start on the phone's clock, after the camera clock offset is taken out. */
     val clipOffsetMs: Long? = null,
+    /** Start / finish line crossing times, on the run's GPS time base (GNSS UTC ms with the RaceBox). */
+    val startCrossMs: Long? = null,
+    val finishCrossMs: Long? = null,
+    /** Why the run has no lap time (or a caveat on it), from the last timing pass. */
+    val timingNote: String? = null,
 ) {
     /** A clip is expected: the camera recorded it (runs from before this field existed: camera-started ones). */
     val expectsClip: Boolean get() = cameraRecorded || !manual
@@ -141,6 +146,7 @@ data class Lap(
         .putOpt("lapTimeMs", lapTimeMs).putOpt("syncOffsetMs", syncOffsetMs).putOpt("note", note).put("manual", manual)
         .put("cameraRecorded", cameraRecorded).putOpt("clipStartMs", clipStartMs)
         .putOpt("clipDurationS", clipDurationS).putOpt("clipOffsetMs", clipOffsetMs)
+        .putOpt("startCrossMs", startCrossMs).putOpt("finishCrossMs", finishCrossMs).putOpt("timingNote", timingNote)
 
     companion object {
         fun fromJson(o: JSONObject) = Lap(
@@ -160,6 +166,9 @@ data class Lap(
             clipStartMs = o.optLongOrNull("clipStartMs"),
             clipDurationS = o.optLongOrNull("clipDurationS")?.toInt(),
             clipOffsetMs = o.optLongOrNull("clipOffsetMs"),
+            startCrossMs = o.optLongOrNull("startCrossMs"),
+            finishCrossMs = o.optLongOrNull("finishCrossMs"),
+            timingNote = o.optStringOrNull("timingNote"),
         )
     }
 }

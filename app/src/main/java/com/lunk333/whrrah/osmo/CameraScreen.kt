@@ -325,6 +325,18 @@ private fun BleMonitorCard() {
                 }
                 TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Log") }
             }
+            // FOV isn't reported over Bluetooth: prove the setup with a short test clip instead.
+            val ctl = remember { com.lunk333.whrrah.session.SessionController.get(context) }
+            OutlinedButton(onClick = ctl::checkCameraSetup, enabled = !ctl.setupCheckRunning) {
+                Text(if (ctl.setupCheckRunning) "Checking…" else "Check camera setup (3 s test clip)")
+            }
+            ctl.setupCheck?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = when (ctl.setupCheckOk) {
+                    true -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                    false -> androidx.compose.ui.graphics.Color(0xFFC62828)
+                    null -> MaterialTheme.colorScheme.onSurface
+                })
+            }
             if (showLog) mon.log.asReversed().take(40).forEach {
                 Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp)
             }

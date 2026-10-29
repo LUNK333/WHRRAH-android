@@ -225,6 +225,7 @@ class SessionController private constructor(context: Context) {
      * lengths with run start/stop times (phone clock), working out the camera clock offset itself.
      */
     private fun matchClips(videos: List<CameraFile>) {
+        if (setupCheckRunning) return onSetupCheckList(videos)
         val s = session ?: return
         val taken = s.laps.mapNotNull { it.clip }.toSet()
         val runs = s.laps.filter { !it.recording && it.clip == null && it.expectsClip }
@@ -247,6 +248,84 @@ class SessionController private constructor(context: Context) {
             activity = "No clips on the camera line up with the ${runs.size} unmatched runs"
         }
         fetchNextGyro()
+    }
+
+    // ---- Check camera setup: a 3 s test clip, then is there gyro in it? -----------------------
+
+    /** Result / progress of the last setup check (Dev options), and whether one is running. */
+    var setupCheck by mutableStateOf<String?>(null); private set
+    var setupCheckOk by mutableStateOf<Boolean?>(null); private set
+    var setupCheckRunning by mutableStateOf(false); private set
+
+    /**
+     * FOV can't be read over Bluetooth, so prove the setup the direct way: record a ~3 s clip over
+     * Bluetooth, fetch it over WiFi, and see whether it carries the 1 kHz gyro. Session must be closed
+     * (the test recording would otherwise become a run). The clip is left on the camera.
+     */
+    fun checkCameraSetup() {
+        if (setupCheckRunning) return
+        setupCheckOk = null
+        when {
+            session != null -> { setupCheck = "Close the session first — the test recording would become a run"; return }
+            !camera.connected -> { setupCheck = "Connect the camera over Bluetooth first"; return }
+            camera.recording == true -> { setupCheck = "The camera is already recording — stop it first"; return }
+            link.lastCamera == null -> { setupCheck = "Pair the camera over WiFi once first (Scan above)"; return }
+        }
+        setupCheckRunning = true
+        setupCheck = "Recording a 3 s test clip…"
+        camera.setRecording(true)
+        main.postDelayed(checkStop, 4500)
+        main.postDelayed(checkTimeout, 120_000)
+    }
+
+    private val checkStop = Runnable {
+        if (camera.recording != true) return@Runnable finishSetupCheck(false, "The camera didn't start recording — is it in Video mode?")
+        camera.setRecording(false)
+        setupCheck = "Stopping, then joining the camera's WiFi…"
+        main.postDelayed(checkConnect, 3000)
+    }
+
+    private val checkConnect = Runnable {
+        val cam = link.lastCamera ?: return@Runnable finishSetupCheck(false, "No camera paired")
+        link.connect(cam.address, cam.name)   // waits for the Bluetooth remote to let go first
+        main.post(checkWatch)
+    }
+
+    private val checkWatch = object : Runnable {
+        override fun run() {
+            if (!setupCheckRunning) return
+            if (link.phase == OsmoLink.Phase.FAILED) return finishSetupCheck(false, "WiFi: ${link.status}")
+            if (link.phase != OsmoLink.Phase.READY) setupCheck = "WiFi: ${link.status}"
+            main.postDelayed(this, 1000)
+        }
+    }
+
+    private val checkTimeout = Runnable { if (setupCheckRunning) finishSetupCheck(false, "Timed out") }
+
+    private fun onSetupCheckList(videos: List<CameraFile>) {
+        // The test clip is the newest one (the camera's clock may be off, so don't match by time).
+        val clip = videos.maxByOrNull { it.timestamp } ?: return finishSetupCheck(false, "No clips on the camera")
+        setupCheck = "Reading the gyro track of ${clip.name}…"
+        val out = File(app.cacheDir, "setup_check_gyro.csv")
+        val started = link.fetchGyroTo(clip, out) { r ->
+            r.onSuccess { g ->
+                val setup = camera.setup?.let { " (${it.modeName}, stabilization ${it.eisName}, res ${it.resolution}, fps ${it.fps})" } ?: ""
+                if (g.samples.size > 0) finishSetupCheck(true, "✓ Gyro present: ${g.samples.size} samples in ${clip.name}$setup")
+                else finishSetupCheck(false, "✗ No gyro in ${clip.name}$setup — set FOV to Wide, stabilization off, " +
+                    "and a recording format that keeps gyro")
+            }.onFailure { finishSetupCheck(false, "Couldn't read the clip: ${it.message}") }
+        }
+        if (!started) main.postDelayed({ onSetupCheckList(videos) }, 2000)
+    }
+
+    private fun finishSetupCheck(ok: Boolean, msg: String) {
+        main.removeCallbacks(checkStop); main.removeCallbacks(checkConnect)
+        main.removeCallbacks(checkWatch); main.removeCallbacks(checkTimeout)
+        setupCheckRunning = false
+        setupCheckOk = ok
+        setupCheck = msg
+        if (link.phase != OsmoLink.Phase.IDLE) link.disconnect()
+        main.postDelayed({ camera.start() }, 2000)   // back to the Bluetooth remote
     }
 
     // ---- Match clips: one WiFi visit after the event -----------------------------------------

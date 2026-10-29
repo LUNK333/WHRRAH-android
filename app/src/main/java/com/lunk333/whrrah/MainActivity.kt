@@ -54,6 +54,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Keep the screen on while the app is in front (lap timer on the dash). Only applies while this
+        // window is visible, so the phone sleeps normally once you switch away.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         handleIncomingIntent(intent)
         setContent {
             WHRRAHTheme {

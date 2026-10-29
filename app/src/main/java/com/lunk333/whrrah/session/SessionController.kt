@@ -63,6 +63,7 @@ class SessionController private constructor(context: Context) {
         // Both feed the log; phone fixes are dropped while the RaceBox is streaming.
         phoneGps.onFix = { if (!raceBox.connected) onFix(it, phoneGps.name) }
         raceBox.onFix = { onFix(it, raceBox.name) }
+        raceBox.onData = { d, elapsed -> onImu(d, elapsed) }
     }
 
     // ---- open / close ------------------------------------------------------------------------
@@ -96,6 +97,8 @@ class SessionController private constructor(context: Context) {
         }).also { store.save(it) }
         loadWalkPath(s)
         retimeAll()
+        // Sync any run that has both the clip's gyro and RaceBox data but no sync yet.
+        session?.laps?.filter { it.gyroFile != null && it.imuFile != null && it.videoStartMs == null }?.forEach { syncRun(it.n) }
         activity = "Session open — folder ${s.id}"
         com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
@@ -303,6 +306,7 @@ class SessionController private constructor(context: Context) {
                 updateLap(lap.n) { it.copy(gyroFile = out.name, gyroSamples = g.samples.size,
                     note = if (g.samples.size == 0) NO_GYRO_NOTE else it.note) }
                 activity = "Run ${lap.n}: gyro saved (${g.samples.size} samples, %.1f s)".format(g.seconds)
+                syncRun(lap.n)
             }.onFailure { activity = "Run ${lap.n}: gyro fetch failed (${it.message}) — will retry" }
             main.postDelayed(::fetchNextGyro, if (r.isSuccess) 0 else 5000)
         }
@@ -330,6 +334,72 @@ class SessionController private constructor(context: Context) {
         runCatching { gpsWriter?.close() }
         gpsWriter = null
         gpsLapN = 0
+        runCatching { imuWriter?.close() }
+        imuWriter = null
+    }
+
+    // ---- RaceBox IMU log (for video sync) ----------------------------------------------------
+
+    private var imuWriter: java.io.BufferedWriter? = null
+
+    /** Log RaceBox motion while a run is recording; the file is created on the first sample. */
+    private fun onImu(d: com.lunk333.whrrah.racebox.RaceBoxData, elapsed: Long) {
+        val n = gpsLapN.takeIf { it > 0 } ?: return
+        val s = session ?: return
+        val w = imuWriter ?: run {
+            val f = File(store.imuDir(s.id), "lap%02d.csv".format(n))
+            updateLap(n) { it.copy(imuFile = f.name) }
+            f.bufferedWriter().also {
+                it.write("elapsed_ms,wall_ms,utc_ms,g_x,g_y,g_z,roll_dps,pitch_dps,yaw_dps\n")
+                imuWriter = it
+            }
+        }
+        runCatching {
+            w.write("$elapsed,${System.currentTimeMillis()},${if (d.timeValid) d.utcMs else 0},${d.gX},${d.gY},${d.gZ},${d.rollRate},${d.pitchRate},${d.yawRate}\n")
+        }
+    }
+
+    // ---- video sync ----------------------------------------------------------------------------
+
+    /**
+     * Find where the run's clip sits on the data clock: correlate the clip's gyro with the RaceBox's
+     * rotation rates, starting from the timestamp guess (run start + clip offset). Runs off the main thread.
+     */
+    fun syncRun(n: Int) {
+        val s = session ?: return
+        val lap = s.laps.firstOrNull { it.n == n } ?: return
+        val gyro = lap.gyroFile?.let { File(store.gyroDir(s.id), it) }?.takeIf { it.isFile } ?: return
+        val imu = lap.imuFile?.let { File(store.imuDir(s.id), it) }?.takeIf { it.isFile } ?: return
+        val sid = s.id
+        Thread {
+            val res = runCatching { syncFromFiles(gyro, imu, lap.recStartWallMs + (lap.clipOffsetMs ?: 0)) }.getOrNull()
+            main.post {
+                if (session?.id != sid) return@post
+                if (res == null) { activity = "Run $n: couldn't sync the video (not enough overlapping motion)"; return@post }
+                val (videoStart, estimate, r) = res
+                updateLap(n) { it.copy(videoStartMs = Math.round(videoStart), syncOffsetMs = Math.round(videoStart - estimate), syncR = r) }
+                activity = "Run $n: video synced %+.0f ms from the timestamps (match %.2f)".format(videoStart - estimate, r)
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /** (video start on the data clock, the timestamp guess on that clock, correlation). */
+    private fun syncFromFiles(gyro: File, imu: File, estimateWallMs: Long): Triple<Double, Double, Double>? {
+        val t = ArrayList<Double>(); val w = ArrayList<Double>(); val x = ArrayList<Double>(); val y = ArrayList<Double>(); val z = ArrayList<Double>()
+        gyro.useLines { lines -> lines.drop(1).forEach { l ->
+            val c = l.split(','); if (c.size >= 5) { t.add(c[0].toDouble()); w.add(c[1].toDouble()); x.add(c[2].toDouble()); y.add(c[3].toDouble()); z.add(c[4].toDouble()) }
+        } }
+        val video = GyroSync.videoSpeed(t.toDoubleArray(), w.toDoubleArray(), x.toDoubleArray(), y.toDoubleArray(), z.toDoubleArray())
+        // Data clock: GNSS UTC when every sample has it, else the phone's wall clock (what the guess is on).
+        val rows = imu.useLines { lines -> lines.drop(1).mapNotNull { l -> l.split(',').takeIf { it.size >= 9 } }.toList() }
+        val useUtc = rows.isNotEmpty() && rows.all { (it[2].toLongOrNull() ?: 0) > 0 }
+        val dt = DoubleArray(rows.size) { (if (useUtc) rows[it][2] else rows[it][1]).toDouble() }
+        val speed = GyroSync.dataSpeed(DoubleArray(rows.size) { rows[it][6].toDouble() },
+            DoubleArray(rows.size) { rows[it][7].toDouble() }, DoubleArray(rows.size) { rows[it][8].toDouble() })
+        // Guess on the data clock: wall + (UTC − wall) at the first sample when the data is on UTC.
+        val estimate = estimateWallMs + if (useUtc) (rows[0][2].toDouble() - rows[0][1].toDouble()) else 0.0
+        val r = GyroSync.align(video, dt, speed, estimate) ?: return null
+        return Triple(r.videoStartMs, estimate, r.r)
     }
 
     /** The last ~30 s of fixes from the active source, for working out the direction of travel. */
@@ -348,6 +418,7 @@ class SessionController private constructor(context: Context) {
             lastFlushMs = fix.elapsedMs
             runCatching { walkWriter?.flush() }
             runCatching { gpsWriter?.flush() }
+            runCatching { imuWriter?.flush() }
         }
         val w = gpsWriter ?: return
         w.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n")

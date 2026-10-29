@@ -476,7 +476,13 @@ private fun LapRow(lap: Lap) {
                         else -> "none (phone only)"
                     },
                     "gyro " + (lap.gyroSamples?.let { "✓ $it" } ?: if (lap.clip != null) "pending" else "—"),
-                    "sync " + (lap.syncOffsetMs?.let { "%+d ms".format(it) } ?: "— (needs RaceBox)"),
+                    "sync " + when {
+                        lap.syncOffsetMs != null && (lap.syncR ?: 0.0) >= 0.6 -> "%+d ms".format(lap.syncOffsetMs)
+                        lap.syncOffsetMs != null -> "%+d ms? (weak match %.2f)".format(lap.syncOffsetMs, lap.syncR ?: 0.0)
+                        lap.imuFile == null -> "— (needs RaceBox data)"
+                        lap.gyroFile == null -> "— (needs clip gyro)"
+                        else -> "—"
+                    },
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
             )

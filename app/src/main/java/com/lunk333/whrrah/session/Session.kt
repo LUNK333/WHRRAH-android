@@ -133,6 +133,12 @@ data class Lap(
     val finishCrossMs: Long? = null,
     /** Why the run has no lap time (or a caveat on it), from the last timing pass. */
     val timingNote: String? = null,
+    /** RaceBox motion log (g-forces, rotation rates) in the session's imu/ folder. */
+    val imuFile: String? = null,
+    /** Video t = 0 on the run's data clock (GNSS UTC ms with the RaceBox), from gyro correlation. */
+    val videoStartMs: Long? = null,
+    /** Correlation at the sync peak (0..1; < 0.6 = don't trust it). */
+    val syncR: Double? = null,
 ) {
     /** A clip is expected: the camera recorded it (runs from before this field existed: camera-started ones). */
     val expectsClip: Boolean get() = cameraRecorded || !manual
@@ -147,6 +153,7 @@ data class Lap(
         .put("cameraRecorded", cameraRecorded).putOpt("clipStartMs", clipStartMs)
         .putOpt("clipDurationS", clipDurationS).putOpt("clipOffsetMs", clipOffsetMs)
         .putOpt("startCrossMs", startCrossMs).putOpt("finishCrossMs", finishCrossMs).putOpt("timingNote", timingNote)
+        .putOpt("imuFile", imuFile).putOpt("videoStartMs", videoStartMs).putOpt("syncR", syncR)
 
     companion object {
         fun fromJson(o: JSONObject) = Lap(
@@ -169,6 +176,9 @@ data class Lap(
             startCrossMs = o.optLongOrNull("startCrossMs"),
             finishCrossMs = o.optLongOrNull("finishCrossMs"),
             timingNote = o.optStringOrNull("timingNote"),
+            imuFile = o.optStringOrNull("imuFile"),
+            videoStartMs = o.optLongOrNull("videoStartMs"),
+            syncR = if (o.has("syncR") && !o.isNull("syncR")) o.getDouble("syncR") else null,
         )
     }
 }
@@ -237,6 +247,7 @@ class SessionStore(val root: File) {
     fun dir(id: String) = File(root, id)
     fun gyroDir(id: String) = File(dir(id), "gyro").also { it.mkdirs() }
     fun gpsDir(id: String) = File(dir(id), "gps").also { it.mkdirs() }
+    fun imuDir(id: String) = File(dir(id), "imu").also { it.mkdirs() }
 
     fun create(event: String, driver: String, car: String, nowMs: Long = System.currentTimeMillis()): Session {
         root.mkdirs()

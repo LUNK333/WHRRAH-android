@@ -56,6 +56,8 @@ class RaceBox private constructor(private val context: Context) : GpsSource {
     override val connected: Boolean get() = state == State.CONNECTED && latest != null
     override var lastFix by mutableStateOf<GpsFix?>(null); private set
     override var onFix: ((GpsFix) -> Unit)? = null
+    /** Every Data Message (main thread) with the phone's elapsedRealtime when it arrived — for the IMU log. */
+    var onData: ((RaceBoxData, Long) -> Unit)? = null
 
     /** Latest decoded Data Message. */
     var latest by mutableStateOf<RaceBoxData?>(null); private set
@@ -212,6 +214,7 @@ class RaceBox private constructor(private val context: Context) : GpsSource {
         lastItow = d.iTowMs
         main.post {
             latest = d
+            onData?.invoke(d, elapsed)
             packets++
             if (gap) gaps++
             arrivals.addLast(elapsed)

@@ -306,11 +306,13 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     private var joinedWithBssid = false
 
     /** Remember the camera AP's BSSID after a join, so the next join can skip the approval prompt. */
-    private fun rememberBssid(network: Network) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val info = if (Build.VERSION.SDK_INT >= 29) cm.getNetworkCapabilities(network)?.transportInfo as? android.net.wifi.WifiInfo else null
-        val b = info?.bssid?.takeIf { it != "02:00:00:00:00:00" && it.isNotBlank() } ?: return
-        address?.let { prefs.edit().putString("bssid_$it", b).apply() }
+    private fun rememberBssid(@Suppress("UNUSED_PARAMETER") network: Network) {
+        // The BSSID arrives with the network's capabilities, just after onAvailable: check shortly after.
+        for (delay in longArrayOf(500, 2000, 5000)) main.postDelayed({
+            val b = ap?.connectedBssid ?: return@postDelayed
+            val key = address?.let { "bssid_$it" } ?: return@postDelayed
+            if (prefs.getString(key, null) != b) { prefs.edit().putString(key, b).apply(); logLine("saved the camera AP's BSSID ($b) for faster joins") }
+        }, delay)
     }
 
     override fun onNetwork(network: Network, link: LinkProperties?) { main.post {

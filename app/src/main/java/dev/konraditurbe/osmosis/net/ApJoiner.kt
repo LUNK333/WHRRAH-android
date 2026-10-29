@@ -29,6 +29,10 @@ class ApJoiner(context: Context, private val listener: Listener) {
         .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var cb: ConnectivityManager.NetworkCallback? = null
 
+    /** WHRRAH patch: the joined AP's BSSID, once the platform reports it (needs location permission). */
+    @Volatile var connectedBssid: String? = null
+        private set
+
     // Remembered so [rejoin] can re-issue the identical request without the caller having to hold
     // the credentials for the whole session.
     private var lastSsid: String? = null
@@ -51,7 +55,16 @@ class ApJoiner(context: Context, private val listener: Listener) {
             .setNetworkSpecifier(specBuilder.build())
             .build()
 
-        val callback = object : ConnectivityManager.NetworkCallback() {
+        // WHRRAH patch: FLAG_INCLUDE_LOCATION_INFO so the network's WifiInfo isn't redacted (API 31+)
+        // and the AP's BSSID can be read in onCapabilitiesChanged — see [connectedBssid].
+        val callback = object : ConnectivityManager.NetworkCallback(
+            if (android.os.Build.VERSION.SDK_INT >= 31) FLAG_INCLUDE_LOCATION_INFO else 0
+        ) {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                val info = if (android.os.Build.VERSION.SDK_INT >= 29) caps.transportInfo as? android.net.wifi.WifiInfo else null
+                info?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" }?.let { connectedBssid = it }
+            }
+
             override fun onAvailable(network: Network) {
                 val bound = cm.bindProcessToNetwork(network)
                 val link = runCatching { cm.getLinkProperties(network) }.getOrNull()

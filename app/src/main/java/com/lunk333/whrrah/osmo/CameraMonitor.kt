@@ -75,7 +75,8 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
     fun start(addr: String? = null) {
         val a = addr ?: prefs.getString("last_addr", null) ?: return fail("No camera paired yet — pair one in Dev options → Camera test bench")
         if (wantLink && gatt != null && address == a) return
-        stop()
+        // An old link still going down: wait for it, then start (closing it later would kill the new one).
+        if (gatt != null) { stop { start(a) }; return }
         // One BLE link to the camera at a time: drop the WiFi-side link (Dev options) if it's up.
         OsmoLink.get(context).let { if (it.phase != OsmoLink.Phase.IDLE) it.disconnect() }
         address = a
@@ -84,11 +85,32 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
         com.lunk333.whrrah.LinkService.update(context)
     }
 
-    fun stop() {
+    /** True while a BLE link (or a disconnect in progress) is held. */
+    val holdsLink: Boolean get() = gatt != null
+
+    private var onStopped: (() -> Unit)? = null
+
+    /**
+     * Drop the link. [then] runs once the link is really down: the camera keeps treating a link as an
+     * R-SDK remote session (and ignores media pairing on it) until the radio link itself goes, and
+     * Android reuses a still-up link for the next connect — so hand-overs must wait for it.
+     */
+    fun stop(then: (() -> Unit)? = null) {
         wantLink = false
         main.removeCallbacksAndMessages(null)
-        gatt?.disconnect(); gatt?.close(); gatt = null
         state = State.OFF; message = ""; recording = null
+        val g = gatt
+        if (g == null) { then?.let { main.post(it) }; return }
+        onStopped = then
+        g.disconnect()
+        // If the disconnect callback never comes, give up waiting after a few seconds.
+        main.postDelayed({ finishStop() }, 4000)
+    }
+
+    private fun finishStop() {
+        gatt?.close(); gatt = null
+        val cb = onStopped; onStopped = null
+        if (cb != null) { logLine("link down — handing over"); main.postDelayed(cb, 1500) }   // let the radio settle
     }
 
     private fun open() {
@@ -125,7 +147,11 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
         gatt?.disconnect()
     }
 
-    override fun onDisconnected() { main.post { logLine("BLE disconnected"); linkDown("Camera link dropped") } }
+    override fun onDisconnected() { main.post {
+        logLine("BLE disconnected")
+        if (!wantLink) { main.removeCallbacksAndMessages(null); finishStop(); return@post }
+        linkDown("Camera link dropped")
+    } }
 
     override fun onLog(s: String) = logLine(s)
 

@@ -235,9 +235,9 @@ class SessionController private constructor(context: Context) {
         val cam = link.lastCamera ?: run { activity = "No camera paired yet — pair one in Dev options"; return }
         if (matching || currentRun != null) return
         matching = true
-        camera.stop()   // one BLE link to the camera at a time; OsmoLink needs it for the WiFi wake
-        activity = "Match clips: connecting to the camera's WiFi…"
-        main.postDelayed({ link.connect(cam.address, cam.name) }, 500)
+        activity = "Match clips: handing the camera over from Bluetooth to WiFi…"
+        // OsmoLink waits for the remote's link to be fully down before it connects.
+        link.connect(cam.address, cam.name)
         main.postDelayed(matchTimeout, 5 * 60_000L)
         main.post(watchMatch)
     }

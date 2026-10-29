@@ -169,9 +169,16 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     /** [name] is the advertised BLE name, which is also the camera's WiFi SSID if BLE doesn't send one. */
     fun connect(addr: String, name: String?) {
+        // One BLE link to the camera at a time, and the remote's link must be fully down first
+        // (on a live remote link the camera ignores media pairing).
+        val monitor = CameraMonitor.get(context)
+        if (monitor.holdsLink) {
+            setPhase(Phase.CONNECTING, "Disconnecting the Bluetooth remote first…")
+            monitor.stop { connect(addr, name) }
+            return
+        }
         stopScan()
         disconnect()
-        CameraMonitor.get(context).stop()   // one BLE link to the camera at a time
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
             ?: return fail("Bluetooth unavailable")
         address = addr
@@ -193,6 +200,15 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         for (delay in longArrayOf(2500, 5000)) main.postDelayed({
             if (pairStatus == -1 && !paired && this.gatt != null) { logLine("no pairing reply yet — re-sending"); sendPair() }
         }, delay)
+        // Still nothing: if we already know the camera's WiFi, wake it and join with the saved password
+        // instead of waiting for a pairing reply that isn't coming.
+        main.postDelayed({
+            if (pairStatus == -1 && !paired && this.gatt != null && ssid != null && password != null) {
+                logLine("no pairing reply — waking the WiFi and using the saved password")
+                gatt?.writeCommand(OsmoCommands.session5310())
+                main.postDelayed({ maybeJoin() }, 1500)
+            }
+        }, 7500)
     } }
 
     private fun sendPair() {

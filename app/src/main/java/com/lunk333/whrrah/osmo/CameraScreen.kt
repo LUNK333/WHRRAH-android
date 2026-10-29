@@ -90,6 +90,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
 
     LazyColumn(modifier = modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { RecordingCard(link) }
+        item { BleMonitorCard() }
         item {
             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                 Column(Modifier.padding(12.dp)) {
@@ -287,6 +288,35 @@ private fun RecordingCard(link: OsmoLink) {
                 Text((if (e.started) "● started " else "■ stopped ") + fmt.format(Date(e.wallMs)) +
                     (if (!e.started) " (%d:%02d)".format(e.recordTimeS / 60, e.recordTimeS % 60) else ""),
                     style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+/** The Bluetooth-only remote link a session uses (record start/stop) — start/stop it and see its log. */
+@Composable
+private fun BleMonitorCard() {
+    val context = LocalContext.current
+    val mon = remember { CameraMonitor.get(context) }
+    var showLog by remember { mutableStateOf(false) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Bluetooth remote (session mode) · ${mon.state.name.lowercase().replace('_', ' ')}", style = MaterialTheme.typography.titleSmall)
+            Text(listOfNotNull(mon.message.ifEmpty { null },
+                mon.recording?.let { if (it) "recording" else "not recording" }, mon.mode,
+                mon.battery.takeIf { it in 0..100 }?.let { "battery $it%" }).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (mon.state == CameraMonitor.State.OFF) Button(onClick = { mon.start() }) { Text("Connect (Bluetooth)") }
+                else OutlinedButton(onClick = mon::stop) { Text("Disconnect") }
+                if (mon.connected) {
+                    OutlinedButton(onClick = { mon.setRecording(true) }, enabled = mon.recording != true) { Text("Rec") }
+                    OutlinedButton(onClick = { mon.setRecording(false) }, enabled = mon.recording == true) { Text("Stop") }
+                }
+                TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide log" else "Log") }
+            }
+            if (showLog) mon.log.asReversed().take(40).forEach {
+                Text(it, fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 12.sp)
             }
         }
     }

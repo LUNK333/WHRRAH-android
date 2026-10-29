@@ -17,3 +17,6 @@ are vendored from osmosis too).
 - `camera/CameraSession.kt`: `holdPlayback` — `false` keeps the keep-alive running (AP up, status pushes) but stops the app-presence beat that holds playback (the Action 4 has no playback exit command; it falls back to capture once the beat stops), and also sends the generic leave.
 
 Re-apply these if the vendored files are ever re-copied.
+
+`rsdk/RsdkProtocol.kt` (DJI R-SDK remote protocol: BLE status / record control) and its tests are
+vendored too, driven by `com.lunk333.whrrah.osmo.CameraMonitor` (the session's Bluetooth-only link).

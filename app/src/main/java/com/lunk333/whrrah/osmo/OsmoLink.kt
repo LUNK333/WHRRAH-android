@@ -171,6 +171,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     fun connect(addr: String, name: String?) {
         stopScan()
         disconnect()
+        CameraMonitor.get(context).stop()   // one BLE link to the camera at a time
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
             ?: return fail("Bluetooth unavailable")
         address = addr

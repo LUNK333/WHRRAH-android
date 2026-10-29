@@ -148,28 +148,27 @@ private fun Dot(color: Color) = Box(Modifier.size(12.dp).clip(CircleShape).backg
 private fun ConnectionStatus() {
     val context = LocalContext.current
     val link = remember { OsmoLink.get(context) }
-    val gps = remember { SessionController.get(context) }.gps
+    val ctl = remember { SessionController.get(context) }
+    val cam = ctl.camera
+    val gps = ctl.gps
+    var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(500); now = android.os.SystemClock.elapsedRealtime() } }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            val camColor = when {
-                link.recording == true -> Color(0xFFE53935)
-                link.phase == OsmoLink.Phase.READY -> Color(0xFF43A047)
-                link.phase == OsmoLink.Phase.FAILED -> Color(0xFFE0A000)
-                link.phase == OsmoLink.Phase.IDLE -> Color.Gray
-                else -> Color(0xFF1E88E5)
+            // The WiFi link only runs for Match clips / Dev options; otherwise it's the Bluetooth monitor.
+            val wifi = link.phase !in setOf(OsmoLink.Phase.IDLE, OsmoLink.Phase.SCANNING)
+            val (camColor, camText) = when {
+                wifi -> (if (link.phase == OsmoLink.Phase.FAILED) Color(0xFFE0A000) else Color(0xFF1E88E5)) to "WiFi — ${link.status}"
+                cam.recording == true -> Color(0xFFE53935) to ((now - cam.recStartElapsedMs) / 1000).let { "REC %d:%02d".format(it / 60, it % 60) }
+                cam.connected && cam.recording == false -> Color(0xFF43A047) to ("standby" + (cam.battery.takeIf { it in 0..100 }?.let { " · battery $it%" } ?: ""))
+                cam.connected -> Color(0xFF1E88E5) to "connected, waiting for status"
+                cam.state == com.lunk333.whrrah.osmo.CameraMonitor.State.WAITING_APPROVAL -> Color(0xFF1E88E5) to "approve the remote on the camera's screen"
+                cam.state == com.lunk333.whrrah.osmo.CameraMonitor.State.CONNECTING -> Color(0xFF1E88E5) to "connecting over Bluetooth…"
+                else -> Color.Gray to (link.lastCamera?.let { "not connected (${it.name})" } ?: "none set up — pair one in Dev options")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Dot(camColor)
-                Text(
-                    "Camera: " + when {
-                        link.recording == true -> "recording"
-                        link.phase == OsmoLink.Phase.READY && link.inPlayback -> "connected (viewer mode — can't record yet)"
-                        link.phase == OsmoLink.Phase.READY -> "connected, ready"
-                        link.phase == OsmoLink.Phase.IDLE -> link.lastCamera?.let { "not connected (${it.name})" } ?: "none set up — pair one in Dev options"
-                        else -> link.status
-                    },
-                    modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium,
-                )
+                Text("Camera: $camText", modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val fix = gps.lastFix
@@ -296,7 +295,9 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
-                OutlinedButton(onClick = ctl::retryPending, enabled = link.phase == OsmoLink.Phase.READY) { Text("Refresh clips") }
+                OutlinedButton(onClick = ctl::matchClipsNow, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null) {
+                    Text(if (ctl.matching) "Matching…" else "Match clips (camera WiFi)")
+                }
                 OutlinedButton(onClick = { ctl.close(); onClosed() }) { Text("Close session") }
             }
         }
@@ -467,7 +468,13 @@ private fun LapRow(lap: Lap) {
                 "GPS ${lap.gpsFixes} fixes").joinToString(" · "), style = MaterialTheme.typography.bodySmall)
             Text(
                 listOf(
-                    "clip " + (lap.clip ?: if (lap.recording || lap.manual) "—" else "waiting…"),
+                    "clip " + when {
+                        lap.clip != null -> lap.clip.substringBeforeLast('.').takeLast(9) +
+                            (lap.clipOffsetMs?.let { " (%+.1f s)".format(it / 1000.0) } ?: "")
+                        lap.recording -> "—"
+                        lap.expectsClip -> "not matched yet"
+                        else -> "none (phone only)"
+                    },
                     "gyro " + (lap.gyroSamples?.let { "✓ $it" } ?: if (lap.clip != null) "pending" else "—"),
                     "sync " + (lap.syncOffsetMs?.let { "%+d ms".format(it) } ?: "— (needs RaceBox)"),
                 ).joinToString(" · "),
@@ -570,7 +577,7 @@ private fun RunButton(ctl: SessionController) {
         val context = LocalContext.current
         val link = remember { OsmoLink.get(context) }
         OutlinedButton(onClick = ctl::startRunFromPhone, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text(if (link.canControlRecording) "Start run + camera recording" else "Start run (phone only — camera not on WiFi)")
+            Text(if (ctl.camera.connected || link.canControlRecording) "Start run + camera recording" else "Start run (phone only — camera not connected)")
         }
     } else {
         val secs = ((now - run.recStartWallMs) / 1000).coerceAtLeast(0)

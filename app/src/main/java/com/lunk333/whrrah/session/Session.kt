@@ -121,7 +121,16 @@ data class Lap(
     val note: String? = null,
     /** Started from the phone's Start run button rather than by the camera recording. */
     val manual: Boolean = false,
+    /** The camera reported recording during this run (so a clip should exist for it). */
+    val cameraRecorded: Boolean = false,
+    /** Matched clip's start on the camera's clock (from its name) and its length. */
+    val clipStartMs: Long? = null,
+    val clipDurationS: Int? = null,
+    /** Clip start − run start on the phone's clock, after the camera clock offset is taken out. */
+    val clipOffsetMs: Long? = null,
 ) {
+    /** A clip is expected: the camera recorded it (runs from before this field existed: camera-started ones). */
+    val expectsClip: Boolean get() = cameraRecorded || !manual
     val recording: Boolean get() = recStopWallMs == null
 
     fun toJson(): JSONObject = JSONObject()
@@ -130,6 +139,8 @@ data class Lap(
         .putOpt("gyroFile", gyroFile).putOpt("gyroSamples", gyroSamples)
         .putOpt("gpsFile", gpsFile).put("gpsFixes", gpsFixes)
         .putOpt("lapTimeMs", lapTimeMs).putOpt("syncOffsetMs", syncOffsetMs).putOpt("note", note).put("manual", manual)
+        .put("cameraRecorded", cameraRecorded).putOpt("clipStartMs", clipStartMs)
+        .putOpt("clipDurationS", clipDurationS).putOpt("clipOffsetMs", clipOffsetMs)
 
     companion object {
         fun fromJson(o: JSONObject) = Lap(
@@ -145,6 +156,10 @@ data class Lap(
             syncOffsetMs = o.optLongOrNull("syncOffsetMs"),
             note = o.optStringOrNull("note"),
             manual = o.optBoolean("manual", false),
+            cameraRecorded = o.optBoolean("cameraRecorded", false),
+            clipStartMs = o.optLongOrNull("clipStartMs"),
+            clipDurationS = o.optLongOrNull("clipDurationS")?.toInt(),
+            clipOffsetMs = o.optLongOrNull("clipOffsetMs"),
         )
     }
 }
@@ -163,6 +178,8 @@ data class Session(
     val laps: List<Lap> = emptyList(),
     /** GPS trace of the course walk, in the session's gps/ folder, once one has been recorded. */
     val trackWalkFile: String? = null,
+    /** Camera clock − phone clock, found when clips were matched (null until then). */
+    val cameraClockOffsetMs: Long? = null,
 ) {
     val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
     val bestLapMs: Long? get() = laps.mapNotNull { it.lapTimeMs }.minOrNull()
@@ -172,6 +189,7 @@ data class Session(
         .put("id", id).put("event", event).put("date", date).put("driver", driver).put("car", car)
         .put("createdMs", createdMs)
         .putOpt("start", start?.toJson()).putOpt("finish", finish?.toJson()).putOpt("trackWalkFile", trackWalkFile)
+        .putOpt("cameraClockOffsetMs", cameraClockOffsetMs)
         .put("laps", JSONArray().apply { laps.forEach { put(it.toJson()) } })
 
     companion object {
@@ -185,6 +203,7 @@ data class Session(
             start = TrackLine.fromJson(o.optJSONObject("start")),
             finish = TrackLine.fromJson(o.optJSONObject("finish")),
             trackWalkFile = o.optStringOrNull("trackWalkFile"),
+            cameraClockOffsetMs = o.optLongOrNull("cameraClockOffsetMs"),
             laps = o.optJSONArray("laps")?.let { a -> List(a.length()) { Lap.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
 

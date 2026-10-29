@@ -21,7 +21,6 @@ import java.io.BufferedWriter
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * The open session and everything that runs while it's open (quick-autocross flow):
@@ -40,6 +39,8 @@ class SessionController private constructor(context: Context) {
     private val app = context.applicationContext
     val store = SessionStore(File(app.getExternalFilesDir(null), "sessions"))
     private val link = OsmoLink.get(app)
+    /** The camera over Bluetooth during the session (recording start/stop); WiFi only for Match clips. */
+    val camera = com.lunk333.whrrah.osmo.CameraMonitor.get(app)
     private val settings = AppSettings.get(app)
     private val main = Handler(Looper.getMainLooper())
 
@@ -57,6 +58,7 @@ class SessionController private constructor(context: Context) {
 
     init {
         link.onRecordingChanged = { e -> onRecordingChanged(e) }
+        camera.onRecordingChanged = { e -> onRecordingChanged(e) }
         link.onFilesListed = { videos, _ -> matchClips(videos) }
         // Both feed the log; phone fixes are dropped while the RaceBox is streaming.
         phoneGps.onFix = { if (!raceBox.connected) onFix(it, phoneGps.name) }
@@ -76,6 +78,7 @@ class SessionController private constructor(context: Context) {
         stopTrackWalk()
         closeGpsLog()
         main.removeCallbacks(autoConnect)
+        if (matching) finishMatching("Session closed")
         phoneGps.stop()   // the RaceBox link is left up — it's cheap and reconnecting takes a while
         session = null
         activity = ""
@@ -118,14 +121,14 @@ class SessionController private constructor(context: Context) {
 
     // ---- camera auto-connect -----------------------------------------------------------------
 
+    /** Keeps the camera's Bluetooth link up while the session is open (it reconnects itself once started). */
     private val autoConnect = object : Runnable {
         override fun run() {
             if (session == null) return
-            val cam = link.lastCamera
-            if (settings.autoConnectCamera && cam != null &&
-                link.phase in setOf(OsmoLink.Phase.IDLE, OsmoLink.Phase.FAILED)) {
-                activity = "Trying to connect to ${cam.name}…"
-                link.connect(cam.address, cam.name)
+            val idleWifi = link.phase in setOf(OsmoLink.Phase.IDLE, OsmoLink.Phase.FAILED)
+            if (settings.autoConnectCamera && !matching && idleWifi &&
+                camera.state == com.lunk333.whrrah.osmo.CameraMonitor.State.OFF && link.lastCamera != null) {
+                camera.start()
             }
             main.postDelayed(this, AUTO_CONNECT_MS)
         }
@@ -134,7 +137,10 @@ class SessionController private constructor(context: Context) {
     // ---- laps --------------------------------------------------------------------------------
 
     private fun onRecordingChanged(e: OsmoLink.RecordEvent) {
-        if (e.started) beginRun(e.wallMs, manual = false) else endRun(e.wallMs, fromCamera = true)
+        if (e.started) {
+            beginRun(e.wallMs, manual = false)
+            currentRun?.let { r -> if (!r.cameraRecorded) updateLap(r.n) { it.copy(cameraRecorded = true) } }
+        } else endRun(e.wallMs, fromCamera = true)
     }
 
     /** The run in progress, if any. */
@@ -144,9 +150,11 @@ class SessionController private constructor(context: Context) {
     fun startRunFromPhone() {
         beginRun(System.currentTimeMillis(), manual = true)
         val n = currentRun?.n ?: return
-        // Also start the camera if it's on WiFi. Its "recording started" push then joins this run,
-        // and the run is treated as a camera run (clip matched, gyro pulled) from here on.
-        if (link.canControlRecording && link.recording != true) {
+        // Also start the camera. Its "recording started" push then joins this run (cameraRecorded),
+        // so a clip gets matched to it later.
+        if (camera.connected && camera.recording != true) {
+            activity = if (camera.setRecording(true)) "Run $n recording — starting the camera…" else "Run $n recording — camera not connected"
+        } else if (link.canControlRecording && link.recording != true) {
             activity = "Run $n recording — starting the camera…"
             link.setRecording(true) { ok, detail ->
                 if (ok) updateLap(n) { it.copy(manual = false) }
@@ -157,6 +165,11 @@ class SessionController private constructor(context: Context) {
 
     /** Phone button: end the run in progress, whoever started it (and stop the camera if it's recording). */
     fun stopRunFromPhone() {
+        if (camera.connected && camera.recording == true) {
+            endRun(System.currentTimeMillis(), fromCamera = true)
+            camera.setRecording(false)
+            return
+        }
         val stopCamera = link.canControlRecording && link.recording == true
         endRun(System.currentTimeMillis(), fromCamera = stopCamera)
         if (stopCamera) link.setRecording(false) { ok, detail -> if (!ok) activity = "Camera didn't stop recording ($detail) — stop it on the camera" }
@@ -177,30 +190,90 @@ class SessionController private constructor(context: Context) {
         // A camera stop ends a phone-started run too, but a phone-started run doesn't wait for a clip.
         closeGpsLog()
         updateLap(open.n) { it.copy(recStopWallMs = wallMs) }
-        activity = "Run ${open.n} stopped" + if (fromCamera || !open.manual) " — waiting for the clip to show up on the camera" else ""
+        activity = "Run ${open.n} stopped" + if (fromCamera || open.expectsClip) " — clip gets matched when you tap Match clips" else ""
     }
 
-    /** Give each finished lap the clip whose start time matches its recording start. */
+    /**
+     * Give finished runs their clips: [ClipMatcher] lines up clip start times (camera clock) and
+     * lengths with run start/stop times (phone clock), working out the camera clock offset itself.
+     */
     private fun matchClips(videos: List<CameraFile>) {
         val s = session ?: return
         val taken = s.laps.mapNotNull { it.clip }.toSet()
-        for (lap in s.laps.filter { !it.recording && it.clip == null }) {
-            val clip = videos.filter { it.name !in taken }
-                .mapNotNull { f -> clipStartMs(f)?.let { f to abs(it - lap.recStartWallMs) } }
-                .filter { it.second <= CLIP_MATCH_MS }
-                .minByOrNull { it.second }?.first ?: continue
-            updateLap(lap.n) { it.copy(clip = clip.name) }
-            activity = "Run ${lap.n} ↔ ${clip.name}"
+        val runs = s.laps.filter { !it.recording && it.clip == null && it.expectsClip }
+            .map { ClipMatcher.RunSpan(it.n, it.recStartWallMs, it.recStopWallMs!!) }
+        val clips = videos.filter { it.name !in taken }
+            .mapNotNull { f -> clipStartMs(f)?.let { ClipMatcher.ClipSpan(f.name, it, f.durationSec) } }
+        val result = ClipMatcher.match(runs, clips)
+        if (result != null) {
+            val byName = videos.associateBy { it.name }
+            var cur = session ?: return
+            cur = cur.copy(cameraClockOffsetMs = result.clockOffsetMs, laps = cur.laps.map { lap ->
+                val m = result.matches.firstOrNull { it.n == lap.n } ?: return@map lap
+                val f = byName[m.clip]
+                lap.copy(clip = m.clip, clipStartMs = f?.let { clipStartMs(it) }, clipDurationS = f?.durationSec?.takeIf { it > 0 },
+                    clipOffsetMs = m.residualMs)
+            })
+            update(cur)
+            activity = "Matched ${result.matches.size} of ${runs.size} runs to clips (camera clock %+.0f s)".format(result.clockOffsetMs / 1000.0)
+        } else if (runs.isNotEmpty()) {
+            activity = "No clips on the camera line up with the ${runs.size} unmatched runs"
         }
         fetchNextGyro()
     }
 
+    // ---- Match clips: one WiFi visit after the event -----------------------------------------
+
+    /** True while Match clips has the camera on WiFi (the Bluetooth monitor is paused). */
+    var matching by mutableStateOf(false); private set
+
+    /**
+     * Connect to the camera's WiFi once: list clips, match them to runs, pull each matched clip's gyro,
+     * then drop WiFi and go back to the Bluetooth monitor.
+     */
+    fun matchClipsNow() {
+        val cam = link.lastCamera ?: run { activity = "No camera paired yet — pair one in Dev options"; return }
+        if (matching || currentRun != null) return
+        matching = true
+        camera.stop()   // one BLE link to the camera at a time; OsmoLink needs it for the WiFi wake
+        activity = "Match clips: connecting to the camera's WiFi…"
+        main.postDelayed({ link.connect(cam.address, cam.name) }, 500)
+        main.postDelayed(matchTimeout, 5 * 60_000L)
+        main.post(watchMatch)
+    }
+
+    private val matchTimeout = Runnable { if (matching) finishMatching("Match clips timed out") }
+
+    /** Ends the visit if the WiFi side fails. */
+    private val watchMatch = object : Runnable {
+        override fun run() {
+            if (!matching) return
+            if (link.phase == OsmoLink.Phase.FAILED) return finishMatching("Match clips: ${link.status}")
+            main.postDelayed(this, 1000)
+        }
+    }
+
+    private fun finishMatching(why: String) {
+        if (!matching) return
+        matching = false
+        main.removeCallbacks(matchTimeout); main.removeCallbacks(watchMatch)
+        link.disconnect()
+        activity = why
+        main.postDelayed(autoConnect, 2000)   // back to the Bluetooth monitor
+    }
+
     /** One gyro fetch at a time; picks the next lap that has a clip but no gyro yet. */
     private fun fetchNextGyro() {
-        if (!settings.autoFetchGyro) return
+        if (!settings.autoFetchGyro) { if (matching) finishMatching("Match clips done (gyro pull is off in Settings)"); return }
         val s = session ?: return
-        val lap = s.laps.firstOrNull { it.clip != null && it.gyroFile == null && it.note != NO_GYRO_NOTE } ?: return
-        val f = link.files.firstOrNull { it.name == lap.clip } ?: return
+        val lap = s.laps.firstOrNull { it.clip != null && it.gyroFile == null && it.note != NO_GYRO_NOTE &&
+            link.files.any { f -> f.name == it.clip } }
+        if (lap == null) {
+            if (matching) finishMatching("Match clips done — " + s.laps.count { it.clip != null } + " runs have clips, " +
+                s.laps.count { it.gyroFile != null } + " have gyro")
+            return
+        }
+        val f = link.files.first { it.name == lap.clip }
         val out = File(store.gyroDir(s.id), "lap%02d_%s.csv".format(lap.n, f.name.substringBeforeLast('.')))
         val started = link.fetchGyroTo(f, out) { r ->
             r.onSuccess { g ->
@@ -216,7 +289,7 @@ class SessionController private constructor(context: Context) {
 
     /** Retry clip matching + gyro for laps that are missing them (e.g. after reconnecting). */
     fun retryPending() {
-        if (link.phase == OsmoLink.Phase.READY) link.listFiles() else matchClips(link.files.toList())
+        if (link.phase == OsmoLink.Phase.READY) link.listFiles() else matchClipsNow()
     }
 
     // ---- GPS ---------------------------------------------------------------------------------
@@ -374,8 +447,6 @@ class SessionController private constructor(context: Context) {
         private const val WALK_SPACING_M = 1.0
         private const val WALK_MAX_ACCURACY_M = 25f
         private const val WALK_MAX_JUMP_M = 100.0
-        /** A clip starts within this of the recording-start push (the camera's clock is set from the phone's). */
-        private const val CLIP_MATCH_MS = 20_000L
 
         /** Clip start from its DJI name (`DJI_yyyyMMddHHmmss_…`), camera local time = phone local time. */
         fun clipStartMs(f: CameraFile): Long? = f.timestamp.takeIf { it.length == 14 }?.let {

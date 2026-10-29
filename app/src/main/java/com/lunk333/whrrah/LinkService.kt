@@ -119,14 +119,17 @@ class LinkService : Service() {
         /** Something worth keeping alive: an open session, or a camera / RaceBox link in use. */
         fun needed(context: Context): Boolean =
             SessionController.get(context).session != null ||
+                com.lunk333.whrrah.osmo.CameraMonitor.get(context).state != com.lunk333.whrrah.osmo.CameraMonitor.State.OFF ||
                 OsmoLink.get(context).phase !in setOf(OsmoLink.Phase.IDLE, OsmoLink.Phase.FAILED, OsmoLink.Phase.SCANNING) ||
                 RaceBox.get(context).state in setOf(RaceBox.State.CONNECTING, RaceBox.State.CONNECTED)
 
         fun statusLine(context: Context): String {
             val link = OsmoLink.get(context)
             val rb = RaceBox.get(context)
+            val ble = com.lunk333.whrrah.osmo.CameraMonitor.get(context)
             val cam = when {
-                link.recording == true -> "REC"
+                ble.recording == true || link.recording == true -> "REC"
+                ble.connected -> "standby"
                 link.phase == OsmoLink.Phase.READY -> "connected"
                 link.phase == OsmoLink.Phase.IDLE || link.phase == OsmoLink.Phase.FAILED -> "off"
                 else -> "connecting"

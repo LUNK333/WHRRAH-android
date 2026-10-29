@@ -106,10 +106,10 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 | ID | Task | Where | Status | Who |
 |---|---|---|---|---|
-| I1 | Design doc: one master clock (phone `elapsedRealtimeNanos`), every sample stamped on receipt, plus each source's own clock | any | TODO | |
-| I2 | Per-source alignment: RaceBox → GPS UTC; ESP32 → offset estimated via BLE ping round-trip; ELM327 → receive time minus half poll latency; video → gyro cross-correlation vs RaceBox/AiM IMU | any | TODO | |
-| I3 | Session recording format (one file per session, all channels, raw + aligned timestamps). Feed into existing `TelemetryLog` model | any | TODO | |
-| I4 | Port `correlate_signals()` + angular-velocity math to Kotlin (or Rust in `xrk-ffi`); unit-test vs desktop output | any | TODO | |
+| I1 | Design doc: one master clock (phone `elapsedRealtimeNanos`), every sample stamped on receipt, plus each source's own clock | any | DOING | desk |
+| I2 | Per-source alignment: RaceBox → GPS UTC; ESP32 → offset estimated via BLE ping round-trip; ELM327 → receive time minus half poll latency; video → gyro cross-correlation vs RaceBox/AiM IMU | any | DOING | desk |
+| I3 | Session recording format (one file per session, all channels, raw + aligned timestamps). Feed into existing `TelemetryLog` model | any | DOING | desk |
+| I4 | Port `correlate_signals()` + angular-velocity math to Kotlin (or Rust in `xrk-ffi`); unit-test vs desktop output | any | DOING | desk |
 | I5 | Recording test app: connect all sources, live channel list with rates + "last seen", record session | any | TODO | |
 | I6 | Car test: record a full session, check alignment against AiM + video | car | TODO | |
 
@@ -164,6 +164,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
 
+- 2026-10-28 · desk · I1–I4 · Video sync: RaceBox rotation rates logged per run (imu/lapNN.csv); GyroSync correlates them with the clip's gyro (angular speed, mount-independent, ±10 s then 1 ms). Synthetic tests: true offset found within 5 ms from guesses 1.2–7.5 s off. NOT yet checked on real data — no gyro clip + matching AiM log on the desktop (the 2025-06-29 Palmer clip has no 1 kHz gyro). First real check: a drive with camera + RaceBox, then Match clips; look at the sync column's match score.
 - 2026-10-28 · desk · L3 · Lap timing: forward crossings of the start/finish lines within their width, interpolated between fixes on GNSS time; last start before the first finish (staging creep ignored); 3 s dropout limit; <2 Hz flagged rough. Times on stop, re-times all runs on line set/nudge and session open. Emulator drive matched an independent calc to the ms (17.073 s). Next: I4 sync offset (clip gyro vs RaceBox rotation rates).
 - 2026-10-28 · desk · B1 · Sessions use the camera over Bluetooth only (DJI R-SDK remote): record start/stop + status work on the Action 4. Match clips = one WiFi visit after the event (48 s for 3 clips): ClipMatcher found the camera clock 14.3 s fast and matched all 3 runs within the 1 s filename precision. The camera ignores media pairing after being used as a remote, so the WiFi join relies on the saved SSID/password (re-pair in the test bench if the camera's WiFi is reset).
 - 2026-10-27 · desk · — · Test drive (daily car): GPS trace good. Wireless Android Auto + camera WiFi fight, neither works — parked as B1h (no AA in the track car).

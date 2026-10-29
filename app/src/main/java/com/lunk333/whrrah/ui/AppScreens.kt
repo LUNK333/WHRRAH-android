@@ -274,6 +274,7 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
                 Text("${s.date} · ${s.driver.ifBlank { "?" }} · ${s.car.ifBlank { "?" }}", style = MaterialTheme.typography.bodyMedium)
             }
         }
+        if (ctl.camera.problems.isNotEmpty()) item { CameraSetupWarning(ctl.camera) }
         item { LapTimerCard(ctl, s) }
         item { PermissionCard(onGranted = ctl::startGps) }
         item { ConnectionStatus() }
@@ -626,6 +627,20 @@ private fun LapTimerCard(ctl: SessionController, s: Session) {
                 color = color,
             )
             Text(caption, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+/** Red banner when the camera's setup would spoil a run (wrong mode, stabilization on, FOV changed). */
+@Composable
+private fun CameraSetupWarning(cam: com.lunk333.whrrah.osmo.CameraMonitor) {
+    Card(Modifier.fillMaxWidth(), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFFC62828))) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("⚠ Check the camera", style = MaterialTheme.typography.titleMedium, color = Color.White)
+            cam.problems.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White) }
+            if (cam.setup?.mode != com.lunk333.whrrah.osmo.CameraMonitor.MODE_VIDEO)
+                Button(onClick = { cam.switchToVideo() }, colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = Color.White, contentColor = Color(0xFFC62828))) { Text("Switch to video") }
         }
     }
 }

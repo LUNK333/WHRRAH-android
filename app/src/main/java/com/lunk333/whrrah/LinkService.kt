@@ -139,7 +139,8 @@ class LinkService : Service() {
                 RaceBox.State.CONNECTING -> "connecting"
                 else -> "off"
             }
-            return "Camera: $cam · RaceBox: $box"
+            val problem = ble.problems.firstOrNull()
+            return (if (problem != null) "⚠ $problem · " else "") + "Camera: $cam · RaceBox: $box"
         }
 
         /** Start or stop the service to match [needed]. Call on the main thread from foreground UI actions. */

@@ -45,6 +45,59 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
     var recording by mutableStateOf<Boolean?>(null); private set
     var battery by mutableStateOf(-1); private set
     var mode by mutableStateOf<String?>(null); private set
+
+    /**
+     * The camera's capture setup from its status push (DJI `camera_status_push_command_frame`):
+     * mode @0, video_resolution @2, fps_idx @3, eis_mode @4, fov_type @7 (DJI calls it reserved).
+     */
+    data class Setup(val mode: Int, val resolution: Int, val fps: Int, val eis: Int, val fov: Int) {
+        val modeName: String get() = MODE_NAMES[mode] ?: "mode 0x%02X".format(mode)
+        val eisName: String get() = EIS_NAMES[eis] ?: "EIS %d".format(eis)
+        fun encode() = "$mode,$resolution,$fps,$eis,$fov"
+        companion object {
+            fun decode(s: String?) = s?.split(',')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 5 }
+                ?.let { Setup(it[0], it[1], it[2], it[3], it[4]) }
+        }
+    }
+
+    var setup by mutableStateOf<Setup?>(null); private set
+    /** The setup the user marked as right (video, Wide, stabilization off…); null = use the default rule. */
+    var goodSetup by mutableStateOf(Setup.decode(context.getSharedPreferences("osmo", Context.MODE_PRIVATE).getString("good_setup", null))); private set
+
+    /** What's wrong with the camera's setup for logging + gyro sync, if anything (empty = fine / unknown). */
+    val problems: List<String> get() {
+        val s = setup ?: return emptyList()
+        if (!connected) return emptyList()
+        val out = ArrayList<String>()
+        if (s.mode != MODE_VIDEO) out.add("Camera is in ${s.modeName} mode, not Video")
+        if (s.eis != 0) out.add("Stabilization is on (${s.eisName}) — turn it off, or the clip has no usable gyro")
+        val g = goodSetup
+        if (g != null && s.mode == g.mode) {
+            if (s.fov != g.fov) out.add("Field of view changed from your saved setup — set it back to Wide")
+            if (s.resolution != g.resolution || s.fps != g.fps) out.add("Resolution / frame rate changed from your saved setup")
+        }
+        return out
+    }
+
+    /** Remember the camera's current setup as the correct one (warn when it differs later). */
+    fun rememberSetup() {
+        val s = setup ?: return
+        goodSetup = s
+        prefs.edit().putString("good_setup", s.encode()).apply()
+        logLine("saved camera setup as correct: ${s.modeName}, ${s.eisName}, res ${s.resolution}, fps ${s.fps}, fov ${s.fov}")
+    }
+
+    fun forgetSetup() { goodSetup = null; prefs.edit().remove("good_setup").apply() }
+
+    /** Switch the camera to normal video mode (R-SDK 0x1D/0x04, as DJI's demo sends it). */
+    fun switchToVideo(): Boolean {
+        if (state != State.CONNECTED) return false
+        logLine("switching the camera to video mode")
+        val b = java.nio.ByteBuffer.allocate(9).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.putInt(0xFF330000.toInt()); b.put(MODE_VIDEO.toByte()); b.put(byteArrayOf(0x01, 0x47, 0x39, 0x36))
+        send(RsdkProtocol.SET_CAMERA, ID_MODE_SWITCH, RsdkProtocol.CMD_WAIT_RESULT, b.array())
+        return true
+    }
     var lastStatusElapsedMs by mutableStateOf(0L); private set
     /** Phone-clock start of the recording in progress (elapsedRealtime), for the REC timer. */
     var recStartElapsedMs by mutableStateOf(0L); private set
@@ -164,6 +217,8 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
                     RsdkProtocol.parseCameraStatus(f.payload)?.let { onStatus(it, f.payload) }
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_STATUS_PUSH_NEW ->
                     RsdkProtocol.parseNewCameraStatus(f.payload)?.let { lastStatusElapsedMs = SystemClock.elapsedRealtime(); mode = it.label }
+                f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == ID_MODE_SWITCH ->
+                    logLine("mode switch reply: ${f.payload.joinToString("") { "%02x".format(it) }}")
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_RECORD_CTRL ->
                     logLine("record command reply: ${f.payload.joinToString("") { "%02x".format(it) }}")
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_STATUS_SUB -> Unit   // subscription ack
@@ -209,6 +264,12 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
         val now = SystemClock.elapsedRealtime()
         lastStatusElapsedMs = now
         battery = s.battery
+        if (raw.size >= 8) {
+            val u = { i: Int -> raw[i].toInt() and 0xFF }
+            val su = Setup(mode = u(0), resolution = u(2), fps = u(3), eis = u(4), fov = u(7))
+            if (su != setup) logLine("camera setup: ${su.modeName}, ${su.eisName}, res ${su.resolution}, fps ${su.fps}, fov ${su.fov}")
+            setup = su
+        }
         if (mode == null || mode?.contains('·') == false) mode = s.modeName
         message = ""
         val was = recording
@@ -250,6 +311,12 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
     private fun append(line: String) { log.add(line); while (log.size > 200) log.removeAt(0) }
 
     companion object {
+        const val MODE_VIDEO = 0x01
+        private const val ID_MODE_SWITCH = 0x04
+        private val MODE_NAMES = mapOf(0x00 to "Slow Motion", 0x01 to "Video", 0x02 to "Timelapse", 0x05 to "Photo",
+            0x0A to "Hyperlapse", 0x1A to "Live", 0x23 to "Webcam", 0x28 to "SuperNight", 0x34 to "Tracking")
+        private val EIS_NAMES = mapOf(0 to "off", 1 to "RockSteady", 2 to "HorizonSteady", 3 to "RockSteady+", 4 to "HorizonBalancing")
+
         @Volatile private var instance: CameraMonitor? = null
         fun get(context: Context): CameraMonitor =
             instance ?: synchronized(this) { instance ?: CameraMonitor(context.applicationContext).also { instance = it } }

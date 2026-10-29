@@ -306,6 +306,16 @@ private fun BleMonitorCard() {
                 mon.recording?.let { if (it) "recording" else "not recording" }, mon.mode,
                 mon.battery.takeIf { it in 0..100 }?.let { "battery $it%" }).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall)
+            mon.setup?.let { su ->
+                Text("Setup: ${su.modeName} · stabilization ${su.eisName} · res ${su.resolution} · fps ${su.fps} · fov ${su.fov}" +
+                    (mon.goodSetup?.let { if (it == su) " · matches saved" else " · differs from saved" } ?: " · nothing saved"),
+                    style = MaterialTheme.typography.bodySmall)
+                mon.problems.forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall, color = androidx.compose.ui.graphics.Color(0xFFC62828)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = mon::rememberSetup) { Text("Remember this setup as correct") }
+                    if (mon.goodSetup != null) TextButton(onClick = mon::forgetSetup) { Text("Forget") }
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (mon.state == CameraMonitor.State.OFF) Button(onClick = { mon.start() }) { Text("Connect (Bluetooth)") }
                 else OutlinedButton(onClick = mon::stop) { Text("Disconnect") }

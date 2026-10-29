@@ -112,6 +112,7 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
     private var wantLink = false
     private var seq = 0
     private var statusFrames = 0
+    private var lastRaw: ByteArray? = null
 
     // Stable controller identity: the camera remembers its approval by these.
     private val deviceId: Int = prefs.getInt("rsdk_device_id", 0).takeIf { it != 0 }
@@ -216,7 +217,11 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_STATUS_PUSH ->
                     RsdkProtocol.parseCameraStatus(f.payload)?.let { onStatus(it, f.payload) }
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_STATUS_PUSH_NEW ->
-                    RsdkProtocol.parseNewCameraStatus(f.payload)?.let { lastStatusElapsedMs = SystemClock.elapsedRealtime(); mode = it.label }
+                    RsdkProtocol.parseNewCameraStatus(f.payload)?.let {
+                        lastStatusElapsedMs = SystemClock.elapsedRealtime()
+                        if (it.label != mode) logLine("mode text: \"${it.label}\"")
+                        mode = it.label
+                    }
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == ID_MODE_SWITCH ->
                     logLine("mode switch reply: ${f.payload.joinToString("") { "%02x".format(it) }}")
                 f.cmdSet == RsdkProtocol.SET_CAMERA && f.cmdId == RsdkProtocol.ID_RECORD_CTRL ->
@@ -264,6 +269,14 @@ class CameraMonitor private constructor(private val context: Context) : GattClie
         val now = SystemClock.elapsedRealtime()
         lastStatusElapsedMs = now
         battery = s.battery
+        // Survey: log any byte that changes, except the ones that tick on their own (record time @5-6,
+        // countdown @9-10, remaining capacity / photos / time @15-26, photo countdown @31-34).
+        lastRaw?.let { old ->
+            val ticking = setOf(5, 6, 9, 10) + (15..26) + (31..34)
+            val diffs = raw.indices.filter { it < old.size && it !in ticking && raw[it] != old[it] }
+            if (diffs.isNotEmpty()) logLine("status bytes changed: " + diffs.joinToString { "@$it %02x→%02x".format(old[it], raw[it]) })
+        }
+        lastRaw = raw.copyOf()
         if (raw.size >= 8) {
             val u = { i: Int -> raw[i].toInt() and 0xFF }
             val su = Setup(mode = u(0), resolution = u(2), fps = u(3), eis = u(4), fov = u(7))

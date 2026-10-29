@@ -206,6 +206,7 @@ class SessionController private constructor(context: Context) {
         currentRun?.let { activity = "Run ${it.n} already recording"; return }
         val lap = Lap(n = s.laps.size + 1, recStartWallMs = wallMs, manual = manual)
         update(s.copy(laps = s.laps + lap))
+        liveStartElapsedMs = null; liveLapMs = null; liveLastFix = null
         openGpsLog(lap.n)
         activity = "Run ${lap.n} recording — logging ${gps.name}"
     }
@@ -402,11 +403,36 @@ class SessionController private constructor(context: Context) {
         return Triple(r.videoStartMs, estimate, r.r)
     }
 
+    // ---- live lap timer ------------------------------------------------------------------------
+
+    /** Phone elapsedRealtime of the start-line crossing in the run in progress (null = not crossed yet). */
+    var liveStartElapsedMs by mutableStateOf<Double?>(null); private set
+    /** The run in progress' lap time once it crosses the finish. */
+    var liveLapMs by mutableStateOf<Long?>(null); private set
+    private var liveLastFix: GpsFix? = null
+
+    /**
+     * Same crossing rule as [LapTimer], one fix at a time, on the phone's clock (so the display can
+     * tick). Crossing the start again before the finish re-arms it (staging creep). The saved time
+     * from the log replaces this when the run stops.
+     */
+    private fun liveTiming(fix: GpsFix) {
+        val s = session ?: return
+        val prev = liveLastFix
+        liveLastFix = fix
+        if (currentRun == null || prev == null || liveLapMs != null) return
+        val pair = listOf(LapTimer.Fix(prev.elapsedMs, prev.lat, prev.lon), LapTimer.Fix(fix.elapsedMs, fix.lat, fix.lon))
+        s.start?.let { st -> LapTimer.crossings(pair, st).firstOrNull()?.let { liveStartElapsedMs = it.tMs; return } }
+        val start = liveStartElapsedMs ?: return
+        s.finish?.let { fin -> LapTimer.crossings(pair, fin).firstOrNull()?.let { liveLapMs = Math.round(it.tMs - start) } }
+    }
+
     /** The last ~30 s of fixes from the active source, for working out the direction of travel. */
     private val recentFixes = ArrayDeque<GpsFix>()
 
     private fun onFix(fix: GpsFix, source: String) {
         recentFixes.addLast(fix)
+        liveTiming(fix)
         while (recentFixes.isNotEmpty() && fix.elapsedMs - recentFixes.first().elapsedMs > HeadingEstimator.WINDOW_MS + 2000) recentFixes.removeFirst()
         walkWriter?.let { ww ->
             runCatching { ww.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n") }

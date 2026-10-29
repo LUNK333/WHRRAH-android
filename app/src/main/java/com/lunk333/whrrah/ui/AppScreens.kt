@@ -274,6 +274,7 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
                 Text("${s.date} · ${s.driver.ifBlank { "?" }} · ${s.car.ifBlank { "?" }}", style = MaterialTheme.typography.bodyMedium)
             }
         }
+        item { LapTimerCard(ctl, s) }
         item { PermissionCard(onGranted = ctl::startGps) }
         item { ConnectionStatus() }
         if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
@@ -593,5 +594,38 @@ private fun RunButton(ctl: SessionController) {
             onClick = ctl::stopRunFromPhone, modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
         ) { Text("Stop run ${run.n}  ·  %d:%02d  ·  %d GPS fixes".format(secs / 60, secs % 60, run.gpsFixes)) }
+    }
+}
+
+/**
+ * Big lap timer: live while a run is between the lines, frozen on the lap time at the finish,
+ * otherwise the last run's time.
+ */
+@Composable
+private fun LapTimerCard(ctl: SessionController, s: Session) {
+    val run = ctl.currentRun
+    val start = ctl.liveStartElapsedMs
+    val live = run != null && start != null && ctl.liveLapMs == null
+    var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(live) { while (live) { now = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(31) } }
+    val last = s.laps.lastOrNull { !it.recording }
+    val (ms, caption, color) = when {
+        run != null && ctl.liveLapMs != null -> Triple(ctl.liveLapMs, "Run ${run.n} · finished", Color(0xFF43A047))
+        live -> Triple((now - start!!).toLong().coerceAtLeast(0), "Run ${run!!.n} · on course", Color(0xFFE53935))
+        run != null -> Triple(0L, "Run ${run.n} · waiting for the start line", MaterialTheme.colorScheme.onSurface)
+        last != null -> Triple(last.lapTimeMs, "Run ${last.n}" + (if (last.lapTimeMs == null) " · no time" else "") +
+            (if (last.lapTimeMs != null && last.lapTimeMs == s.bestLapMs) " · best" else ""), MaterialTheme.colorScheme.onSurface)
+        else -> Triple(0L, "No runs yet", MaterialTheme.colorScheme.onSurface)
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text("Lap Time", style = MaterialTheme.typography.titleMedium)
+            Text(
+                ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—:——.———",
+                style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum"),   // digits don't jiggle
+                color = color,
+            )
+            Text(caption, style = MaterialTheme.typography.titleMedium)
+        }
     }
 }

@@ -200,15 +200,15 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         for (delay in longArrayOf(2500, 5000)) main.postDelayed({
             if (pairStatus == -1 && !paired && this.gatt != null) { logLine("no pairing reply yet — re-sending"); sendPair() }
         }, delay)
-        // Still nothing: if we already know the camera's WiFi, wake it and join with the saved password
-        // instead of waiting for a pairing reply that isn't coming.
-        main.postDelayed({
-            if (pairStatus == -1 && !paired && this.gatt != null && ssid != null && password != null) {
-                logLine("no pairing reply — waking the WiFi and using the saved password")
-                gatt?.writeCommand(OsmoCommands.session5310())
-                main.postDelayed({ maybeJoin() }, 1500)
-            }
-        }, 7500)
+        // Known camera (WiFi password saved): don't wait for a pairing reply — after the camera has been
+        // used as a Bluetooth remote it never sends one. Wake the WiFi and start joining straight away;
+        // a pairing reply, if one comes, just finds the join already under way.
+        if (ssid != null && password != null) main.postDelayed({
+            if (this.gatt == null || joinStarted) return@postDelayed
+            logLine("known camera — waking its WiFi and joining with the saved password")
+            gatt.writeCommand(OsmoCommands.session5310())
+            maybeJoin()
+        }, 400)
     } }
 
     private fun sendPair() {
@@ -296,13 +296,26 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         if (joinStarted) return
         if (Build.VERSION.SDK_INT < 29) return fail("Joining the camera WiFi needs Android 10+")
         joinStarted = true
-        setPhase(Phase.JOINING_WIFI, "Joining camera WiFi \"$s\" — accept the Android prompt")
-        // The AP takes a few seconds to come up; the system dialog keeps searching until it does.
-        main.postDelayed({ ap = ApJoiner(context, this).also { it.join(s, p) } }, 3000)
+        // Asking right away is fine: Android keeps searching until the camera's AP comes up.
+        val bssid = address?.let { prefs.getString("bssid_$it", null) }
+        joinedWithBssid = bssid != null
+        setPhase(Phase.JOINING_WIFI, "Joining camera WiFi \"$s\"" + if (bssid == null) " — accept the Android prompt" else "…")
+        ap = ApJoiner(context, this).also { it.join(s, p, bssid = bssid) }
+    }
+
+    private var joinedWithBssid = false
+
+    /** Remember the camera AP's BSSID after a join, so the next join can skip the approval prompt. */
+    private fun rememberBssid(network: Network) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val info = if (Build.VERSION.SDK_INT >= 29) cm.getNetworkCapabilities(network)?.transportInfo as? android.net.wifi.WifiInfo else null
+        val b = info?.bssid?.takeIf { it != "02:00:00:00:00:00" && it.isNotBlank() } ?: return
+        address?.let { prefs.edit().putString("bssid_$it", b).apply() }
     }
 
     override fun onNetwork(network: Network, link: LinkProperties?) { main.post {
         logLine("WiFi up: ${link?.linkAddresses?.joinToString() ?: "?"}")
+        rememberBssid(network)
         gatt?.disconnect()   // done with BLE; the camera expects the handoff
         // ApJoiner binds the process to the camera network. A non-bypassable VPN (e.g. AdGuard)
         // refuses that bind, and every request then leaks out the VPN and never reaches the camera.
@@ -317,7 +330,18 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         listFiles()
     } }
 
-    override fun onFailed(reason: String) { main.post { fail(reason) } }
+    override fun onFailed(reason: String) { main.post {
+        // A saved BSSID can go stale (camera reset/replaced): forget it and join by name instead.
+        if (joinedWithBssid && ssid != null && password != null) {
+            logLine("join by BSSID failed — retrying by name")
+            address?.let { prefs.edit().remove("bssid_$it").apply() }
+            joinedWithBssid = false
+            ap?.release()
+            ap = ApJoiner(context, this).also { it.join(ssid!!, password!!) }
+            return@post
+        }
+        fail(reason)
+    } }
 
     override fun onLost() { main.post {
         recording = null
@@ -384,6 +408,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     }
 
     private fun newSession(port: Int, tcpPoke: Boolean) = CameraSession(::logLine, port, tcpPoke).also {
+        it.subscribeStatus = false   // only fed the old WiFi status display; saves ~2 s per listing
         it.onRecordState = { rec, secs ->
             val pb = it.playbackReported
             playbackFlag = pb
@@ -557,7 +582,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
      * another fetch is already running (try again later). [onDone] runs on the main thread.
      */
     fun fetchGyroTo(f: CameraFile, out: java.io.File, onDone: (Result<GyroResult>) -> Unit): Boolean =
-        runGyro(f.name, null, 4, saveTo = out, onDone = onDone) { HttpRangeReader(f.path, f.storage) }
+        runGyro(f.name, null, 6, saveTo = out, onDone = onDone) { HttpRangeReader(f.path, f.storage) }
 
     /** Decode a clip already on the phone (e.g. downloaded with DJI Mimo). */
     fun decodeLocalGyro(uri: Uri, name: String) {

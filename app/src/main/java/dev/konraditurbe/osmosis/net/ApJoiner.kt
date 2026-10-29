@@ -35,9 +35,12 @@ class ApJoiner(context: Context, private val listener: Listener) {
     private var lastPassphrase: String = ""
     private var lastWpa3: Boolean = false
 
-    fun join(ssid: String, passphrase: String, wpa3: Boolean = false) {
+    fun join(ssid: String, passphrase: String, wpa3: Boolean = false, bssid: String? = null) {
         lastSsid = ssid; lastPassphrase = passphrase; lastWpa3 = wpa3
         val specBuilder = WifiNetworkSpecifier.Builder().setSsid(ssid)
+        // WHRRAH patch: with the exact BSSID of a network the user already approved for this app,
+        // Android can connect without showing the approval dialog again.
+        bssid?.let { runCatching { specBuilder.setBssid(android.net.MacAddress.fromString(it)) } }
         if (passphrase.isNotEmpty()) {
             // The Osmo 360 AP is WPA3-SAE; the rest are WPA2-PSK.
             if (wpa3) specBuilder.setWpa3Passphrase(passphrase) else specBuilder.setWpa2Passphrase(passphrase)

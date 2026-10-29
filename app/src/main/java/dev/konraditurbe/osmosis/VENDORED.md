@@ -20,3 +20,5 @@ Re-apply these if the vendored files are ever re-copied.
 
 `rsdk/RsdkProtocol.kt` (DJI R-SDK remote protocol: BLE status / record control) and its tests are
 vendored too, driven by `com.lunk333.whrrah.osmo.CameraMonitor` (the session's Bluetooth-only link).
+- `net/ApJoiner.kt`: optional `bssid` on `join()` (an already-approved exact BSSID can skip the dialog).
+- `camera/CameraSession.kt`: `subscribeStatus` — `false` skips the 0x00/0x99 subscriptions (~2 s).

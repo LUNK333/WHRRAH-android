@@ -124,6 +124,9 @@ class CameraSession(
      * before [startKeepAlive].
      */
     @Volatile var holdPlayback = true
+
+    /** WHRRAH patch: false skips the 0x00/0x99 status subscriptions at registration (~2 s); the 0x02/0x80 pushes come anyway. */
+    @Volatile var subscribeStatus = true
     /** Set by [close] so the keep-alive thread sends the leave before the socket goes. */
     @Volatile private var releasePlaybackOnExit = false
     @Volatile private var playbackReleased = false
@@ -240,7 +243,7 @@ class CameraSession(
 
     /** Handshake + register + list. Socket stays open on success. Empty list on failure. */
     override fun fetchFileList(ip: String): List<CameraFile> {
-        if (!openAndRegister(ip)) return emptyList()
+        if (!openAndRegister(ip, subscribeStatus)) return emptyList()
         runCatching { syncTime() }   // set the camera clock + timezone to the phone's, on every connect
         onFetchProgress?.invoke(50)
 

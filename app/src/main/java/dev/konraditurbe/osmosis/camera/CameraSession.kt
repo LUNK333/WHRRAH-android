@@ -326,6 +326,9 @@ class CameraSession(
             // Done when the camera has closed both answers; otherwise wait for the count to settle.
             if (batch >= 3 && streamsEnded(blob.toByteArray(), SD_QUERY_CTR, INTERNAL_QUERY_CTR)) break
             if (batch >= 4 && count > 0 && count == lastCount) { if (++stable >= 2) break } else stable = 0
+            // WHRRAH patch: still nothing ~3 s in means the store answered empty (often: not mounted yet
+            // after a cold wake) — go straight to the re-ask instead of sitting out all 15 batches (~12 s).
+            if (batch >= 3 && count == 0) break
             lastCount = count
         }
         return collectStores(retrySdIfNotReady(blob))
@@ -349,11 +352,17 @@ class CameraSession(
         if (manifestBytes(first, requestCtr = SD_QUERY_CTR).isNotEmpty()) return first
         log("datalink: SD store answered empty — re-asking once (it may not have been mounted yet)")
         sendDuml(0x00, 0x26, listCmd(SD_QUERY_CTR, NEWEST_SD), receiverType = 0x01, receiverId = 0)
+        var lastN = -1
+        var stableN = 0
         for (batch in 0 until 6) {
             for (r in recvAll(700)) blob.write(r); sendAck()
             holdPlayback()
             if (batch == 1) sendDuml(0x00, 0x26, hex("4a040e1001000000000001000000"),
                 receiverType = 0x01, receiverId = 0)
+            // WHRRAH patch: stop once the answer is in and has settled, rather than always 6 batches.
+            val n = countMediaPaths(manifestBytes(blob.toByteArray(), requestCtr = SD_QUERY_CTR))
+            if (n > 0 && n == lastN) { if (++stableN >= 1) break } else stableN = 0
+            lastN = n
         }
         val again = blob.toByteArray()
         val n = countMediaPaths(manifestBytes(again, requestCtr = SD_QUERY_CTR))

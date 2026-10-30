@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.lunk333.whrrah.osmo.CameraScreen
 import com.lunk333.whrrah.osmo.OsmoLink
@@ -276,6 +278,9 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit) {
     val ctl = remember { SessionController.get(context) }
     val link = remember { OsmoLink.get(context) }
     val s = ctl.session ?: return Text("No session open.", modifier.padding(16.dp))
+    // Phone turned sideways (e.g. in a windshield mount): just the timer and the run button.
+    if (androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE) return SessionLandscape(modifier, ctl, s)
 
     LazyColumn(modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -616,13 +621,32 @@ private fun RunButton(ctl: SessionController) {
  */
 @Composable
 private fun LapTimerCard(ctl: SessionController, s: Session) {
+    val (ms, caption, color) = lapTimerState(ctl, s)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text("Lap Time", style = MaterialTheme.typography.titleMedium)
+            Text(
+                fmtTimer(ms),
+                style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum"),   // digits don't jiggle
+                color = color,
+            )
+            Text(caption, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+private fun fmtTimer(ms: Long?) = ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—:——.———"
+
+/** What the lap timer shows: (time, caption, colour). Ticks itself while a lap is live. */
+@Composable
+private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, String, Color> {
     val run = ctl.currentRun
     val start = ctl.liveStartElapsedMs
     val live = run != null && start != null && ctl.liveLapMs == null
     var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
     LaunchedEffect(live) { while (live) { now = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(31) } }
     val last = s.laps.lastOrNull { !it.recording }
-    val (ms, caption, color) = when {
+    return when {
         run != null && ctl.liveLapMs != null -> Triple(ctl.liveLapMs, "Run ${run.n} · finished", Color(0xFF43A047))
         live -> Triple((now - start!!).toLong().coerceAtLeast(0), "Run ${run!!.n} · on course", Color(0xFFE53935))
         run != null -> Triple(0L, "Run ${run.n} · waiting for the start line", MaterialTheme.colorScheme.onSurface)
@@ -630,15 +654,67 @@ private fun LapTimerCard(ctl: SessionController, s: Session) {
             (if (last.lapTimeMs != null && last.lapTimeMs == s.bestLapMs) " · best" else ""), MaterialTheme.colorScheme.onSurface)
         else -> Triple(0L, "No runs yet", MaterialTheme.colorScheme.onSurface)
     }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text("Lap Time", style = MaterialTheme.typography.titleMedium)
-            Text(
-                ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—:——.———",
-                style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum"),   // digits don't jiggle
-                color = color,
-            )
-            Text(caption, style = MaterialTheme.typography.titleMedium)
+}
+
+/**
+ * Landscape session: the lap timer fills the left ~3/4 (time sized to the space), the run button the
+ * right. Everything else (track, run list, clips) is on the portrait screen.
+ */
+@Composable
+private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Session) {
+    val (ms, caption, color) = lapTimerState(ctl, s)
+    Row(modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.weight(3f).fillMaxHeight()) {
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                // "0:00.000" with tabular digits is ~5 em wide; also leave room for the two text lines.
+                val byWidth = maxWidth.value / 5.2f
+                val byHeight = (maxHeight.value - 70f) / 1.25f
+                val size = minOf(byWidth, byHeight).coerceAtLeast(24f)
+                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                    Text("Lap Time", style = MaterialTheme.typography.titleMedium)
+                    Text(fmtTimer(ms), color = color, maxLines = 1, softWrap = false,
+                        style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum",
+                            fontSize = size.sp, lineHeight = (size * 1.1f).sp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(caption, style = MaterialTheme.typography.titleMedium)
+                        Text("Best " + (s.bestLapMs?.let(::fmtTimer) ?: "—"), style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PermissionCard(onGranted = ctl::startGps)
+            if (ctl.camera.problems.isNotEmpty())
+                Text("⚠ Check the camera", color = Color(0xFFC62828), style = MaterialTheme.typography.titleSmall)
+            LandscapeRunButton(ctl, Modifier.fillMaxWidth().weight(1f))
+        }
+    }
+}
+
+/** [RunButton] as a tall block for the landscape screen. */
+@Composable
+private fun LandscapeRunButton(ctl: SessionController, modifier: Modifier) {
+    val run = ctl.currentRun
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(run?.n) { while (run != null) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(500) } }
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    if (run == null) {
+        val context = LocalContext.current
+        val link = remember { OsmoLink.get(context) }
+        Button(onClick = ctl::startRunFromPhone, modifier = modifier, shape = shape) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Start run", style = MaterialTheme.typography.headlineSmall)
+                Text(if (ctl.camera.connected || link.canControlRecording) "+ camera" else "phone only", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    } else {
+        val secs = ((now - run.recStartWallMs) / 1000).coerceAtLeast(0)
+        Button(onClick = ctl::stopRunFromPhone, modifier = modifier, shape = shape,
+            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Stop run ${run.n}", style = MaterialTheme.typography.headlineSmall)
+                Text("%d:%02d".format(secs / 60, secs % 60), style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

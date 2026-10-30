@@ -664,14 +664,14 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
 @Composable
 private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Session) {
     val (ms, caption, color) = lapTimerState(ctl, s)
-    // Hide the navigation (home) bar here — a swipe from the edge brings it back for a moment.
+    // Full screen here: hide the status and navigation bars — a swipe from the edge brings them back for a moment.
     val view = androidx.compose.ui.platform.LocalView.current
     DisposableEffect(view) {
         val window = (view.context as? android.app.Activity)?.window
         val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
         bars?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        bars?.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-        onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars()) }
+        bars?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
     Row(modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.weight(3f).fillMaxHeight()) {

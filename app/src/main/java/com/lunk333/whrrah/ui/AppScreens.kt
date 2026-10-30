@@ -35,6 +35,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -663,6 +664,15 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
 @Composable
 private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Session) {
     val (ms, caption, color) = lapTimerState(ctl, s)
+    // Hide the navigation (home) bar here — a swipe from the edge brings it back for a moment.
+    val view = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(view) {
+        val window = (view.context as? android.app.Activity)?.window
+        val bars = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        bars?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        bars?.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars()) }
+    }
     Row(modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.weight(3f).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {

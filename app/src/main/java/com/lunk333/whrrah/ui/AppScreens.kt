@@ -60,7 +60,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA }
+enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
 @Composable
@@ -80,7 +80,8 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
                 onResume = { go(Screen.SESSION) }, onSettings = { go(Screen.SETTINGS) }, onDev = { go(Screen.DEV) })
             Screen.NEW_SESSION -> NewSessionScreen(m, onCreated = { replace(Screen.SESSION) })
             Screen.OPEN_SESSION -> OpenSessionScreen(m, onOpened = { replace(Screen.SESSION) })
-            Screen.SESSION -> SessionScreen(m, onClosed = ::back)
+            Screen.SESSION -> SessionScreen(m, onClosed = ::back, onViewRuns = { go(Screen.VIEW_RUNS) })
+            Screen.VIEW_RUNS -> RunViewerScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
             Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) })
             Screen.DEV_RACEBOX -> com.lunk333.whrrah.racebox.RaceBoxScreen(m)
@@ -100,6 +101,7 @@ private fun title(s: Screen) = when (s) {
     Screen.DEV_CAMERA -> "Camera test bench"
     Screen.DEV_RACEBOX -> "RaceBox test panel"
     Screen.DEV_DATA -> "CSV / XRK viewer (legacy)"
+    Screen.VIEW_RUNS -> "View runs"
 }
 
 @Composable
@@ -261,7 +263,7 @@ private fun OpenSessionScreen(modifier: Modifier, onOpened: () -> Unit) {
 // ---- session ---------------------------------------------------------------------------------
 
 @Composable
-private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
+private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit, onViewRuns: () -> Unit) {
     val context = LocalContext.current
     val ctl = remember { SessionController.get(context) }
     val link = remember { OsmoLink.get(context) }
@@ -295,6 +297,10 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit) {
         }
         items(s.laps.reversed(), key = { it.n }) { lap -> LapRow(lap) }
 
+        item {
+            Button(onClick = onViewRuns, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null,
+                modifier = Modifier.fillMaxWidth()) { Text("View runs (camera WiFi)") }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
                 OutlinedButton(onClick = ctl::matchClipsNow, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null) {

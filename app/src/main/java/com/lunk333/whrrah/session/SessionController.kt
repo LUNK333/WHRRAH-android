@@ -151,7 +151,7 @@ class SessionController private constructor(context: Context) {
         override fun run() {
             if (session == null) return
             val idleWifi = link.phase in setOf(OsmoLink.Phase.IDLE, OsmoLink.Phase.FAILED)
-            if (settings.autoConnectCamera && !matching && idleWifi &&
+            if (settings.autoConnectCamera && !matching && !viewing && idleWifi &&
                 camera.state == com.lunk333.whrrah.osmo.CameraMonitor.State.OFF && link.lastCamera != null) {
                 camera.start()
             }
@@ -346,6 +346,31 @@ class SessionController private constructor(context: Context) {
         link.connect(cam.address, cam.name)
         main.postDelayed(matchTimeout, 5 * 60_000L)
         main.post(watchMatch)
+    }
+
+    // ---- View runs: hold the camera WiFi while the viewer is open ----------------------------
+
+    /** True while the run viewer has the camera on WiFi (the Bluetooth monitor is paused). */
+    var viewing by mutableStateOf(false); private set
+
+    /**
+     * Join the camera's WiFi for the viewer: lists clips (matching any runs that still lack one) and
+     * stays up so clips can stream. [stopViewing] drops WiFi and goes back to Bluetooth.
+     */
+    fun startViewing() {
+        if (viewing || matching || currentRun != null) return
+        val cam = link.lastCamera ?: run { activity = "No camera paired yet — pair one in Dev options"; return }
+        viewing = true
+        activity = "Viewer: handing the camera over from Bluetooth to WiFi…"
+        link.connect(cam.address, cam.name)
+    }
+
+    fun stopViewing() {
+        if (!viewing) return
+        viewing = false
+        link.disconnect()
+        activity = "Viewer closed"
+        main.postDelayed(autoConnect, 2000)   // back to the Bluetooth monitor
     }
 
     private val matchTimeout = Runnable { if (matching) finishMatching("Match clips timed out") }

@@ -21,4 +21,4 @@ Re-apply these if the vendored files are ever re-copied.
 `rsdk/RsdkProtocol.kt` (DJI R-SDK remote protocol: BLE status / record control) and its tests are
 vendored too, driven by `com.lunk333.whrrah.osmo.CameraMonitor` (the session's Bluetooth-only link).
 - `net/ApJoiner.kt`: optional `bssid` on `join()` (an already-approved exact BSSID can skip the dialog), and `connectedBssid` read via `FLAG_INCLUDE_LOCATION_INFO` (Android 12+ redacts it otherwise).
-- `camera/CameraSession.kt`: `subscribeStatus` — `false` skips the 0x00/0x99 subscriptions (~2 s); `queryNewestPage` gives up on an empty first answer after ~3 s and the SD re-ask stops once its answer settles (instead of ~12 s + 4.2 s fixed).
+- `camera/CameraSession.kt`: `subscribeStatus` — `false` skips the 0x00/0x99 subscriptions (~2 s); `queryNewestPage` gives up on an empty first answer after ~3 s and the SD re-ask stops once its answer settles (instead of ~12 s + 4.2 s fixed); the newest-page sequence sends its 2nd and 3rd commands together after the first receive and can finish from batch 1.

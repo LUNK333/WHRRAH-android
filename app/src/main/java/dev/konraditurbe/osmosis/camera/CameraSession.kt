@@ -316,15 +316,18 @@ class CameraSession(
         for (batch in 0 until 15) {
             for (r in recvAll(800)) blob.write(r); sendAck()
             holdPlayback()
-            if (batch == 1) sendDuml(0x00, 0x26, hex("4a040e1001000000000001000000"),
-                receiverType = 0x01, receiverId = 0)
-            if (batch == 2) sendDuml(0x00, 0x26, listCmd(INTERNAL_QUERY_CTR, NEWEST_INTERNAL),
-                receiverType = 0x01, receiverId = 0)
+            // WHRRAH patch: send the other two commands of the sequence (same order) after the first
+            // receive instead of one per batch, and check for closed answers from batch 1 — the SD
+            // answer is usually in by then, so this saves ~1.6 s of idle waiting.
+            if (batch == 0) {
+                sendDuml(0x00, 0x26, hex("4a040e1001000000000001000000"), receiverType = 0x01, receiverId = 0)
+                sendDuml(0x00, 0x26, listCmd(INTERNAL_QUERY_CTR, NEWEST_INTERNAL), receiverType = 0x01, receiverId = 0)
+            }
             val count = distinctPaths(blob)
             if (count != lastCount) log("datalink: $count files (batch $batch)")
             onFetchProgress?.invoke((55 + batch * 6).coerceAtMost(95))
             // Done when the camera has closed both answers; otherwise wait for the count to settle.
-            if (batch >= 3 && streamsEnded(blob.toByteArray(), SD_QUERY_CTR, INTERNAL_QUERY_CTR)) break
+            if (batch >= 1 && streamsEnded(blob.toByteArray(), SD_QUERY_CTR, INTERNAL_QUERY_CTR)) break
             if (batch >= 4 && count > 0 && count == lastCount) { if (++stable >= 2) break } else stable = 0
             // WHRRAH patch: still nothing ~3 s in means the store answered empty (often: not mounted yet
             // after a cold wake) — go straight to the re-ask instead of sitting out all 15 batches (~12 s).

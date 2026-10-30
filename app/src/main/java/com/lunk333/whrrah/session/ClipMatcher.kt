@@ -28,6 +28,22 @@ object ClipMatcher {
     const val KNOWN_OFFSET_TOL_MS = 30_000L
     private const val LONE_MATCH_MAX_OFFSET_MS = 120_000L
 
+    /**
+     * The camera clock offset that at least two matched runs agree on (within [KNOWN_OFFSET_TOL_MS]),
+     * from each matched run's (clip start − run start). Returns (offset, indexes of the runs that
+     * agree), or null when no two agree — a single match can't define the clock.
+     */
+    fun consensusOffset(diffs: List<Long>): Pair<Long, Set<Int>>? {
+        var best: Set<Int> = emptySet()
+        for (d in diffs) {
+            val members = diffs.indices.filter { abs(diffs[it] - d) <= KNOWN_OFFSET_TOL_MS }.toSet()
+            if (members.size > best.size) best = members
+        }
+        if (best.size < 2) return null
+        val sorted = best.map { diffs[it] }.sorted()
+        return sorted[sorted.size / 2] to best
+    }
+
     fun durationOk(run: RunSpan, clip: ClipSpan): Boolean {
         if (clip.durationS <= 0) return true
         val runS = (run.stopMs - run.startMs) / 1000.0

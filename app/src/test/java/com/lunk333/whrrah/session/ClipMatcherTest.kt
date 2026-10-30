@@ -72,6 +72,18 @@ class ClipMatcherTest {
     }
 
     @Test
+    fun consensusNeedsTwoRunsAndOutvotesALoneBadMatch() {
+        // Three runs agree on a 14.6 s camera clock, one bad match is an hour out.
+        val diffs = listOf(-3_440_000L, 14_600L, 14_120L, 15_050L)
+        val (off, agree) = ClipMatcher.consensusOffset(diffs)!!
+        assertEquals(14_600L, off)
+        assertEquals(setOf(1, 2, 3), agree)
+        // A single match (good or bad) never defines the clock.
+        assertNull(ClipMatcher.consensusOffset(listOf(-3_440_000L)))
+        assertNull(ClipMatcher.consensusOffset(listOf(-3_440_000L, 14_600L)))
+    }
+
+    @Test
     fun nothingToMatch() {
         assertNull(ClipMatcher.match(emptyList(), listOf(clip("A", 0, 10))))
         assertNull(ClipMatcher.match(runs, emptyList()))

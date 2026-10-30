@@ -234,7 +234,7 @@ class SessionController private constructor(context: Context) {
             .map { ClipMatcher.RunSpan(it.n, it.recStartWallMs, it.recStopWallMs!!) }
         val clips = videos.filter { it.name !in taken }
             .mapNotNull { f -> clipStartMs(f)?.let { ClipMatcher.ClipSpan(f.name, it, f.durationSec) } }
-        val result = ClipMatcher.match(runs, clips, knownOffsetMs = s.cameraClockOffsetMs)
+        val result = ClipMatcher.match(runs, clips, knownOffsetMs = clockConsensus(s)?.first)
         if (result != null) {
             val byName = videos.associateBy { it.name }
             var cur = session ?: return
@@ -246,6 +246,9 @@ class SessionController private constructor(context: Context) {
             })
             update(cur)
             activity = "Matched ${result.matches.size} of ${runs.size} runs to clips (camera clock %+.0f s)".format(result.clockOffsetMs / 1000.0)
+            // With the new matches there may now be a consensus that an older match disagrees with.
+            dropInconsistentClips()
+            session?.let { s2 -> clockConsensus(s2)?.let { (off, _) -> if (s2.cameraClockOffsetMs != off) update(s2.copy(cameraClockOffsetMs = off)) } }
         } else if (runs.isNotEmpty()) {
             activity = "No clips on the camera line up with the ${runs.size} unmatched runs"
         }
@@ -334,11 +337,17 @@ class SessionController private constructor(context: Context) {
      * Un-match runs whose clip doesn't fit the session's camera clock offset (> 30 s out) — from before
      * the matcher was tied to it, a lone run could be given a random clip. Clears its gyro + sync too.
      */
+    /** Matched runs and the clock offset two or more of them agree on (null = no consensus yet). */
+    private fun clockConsensus(s: Session): Pair<Long, List<Lap>>? {
+        val matched = s.laps.filter { it.clip != null && it.clipStartMs != null }
+        val c = ClipMatcher.consensusOffset(matched.map { it.clipStartMs!! - it.recStartWallMs }) ?: return null
+        return c.first to matched.filterIndexed { i, _ -> i !in c.second }
+    }
+
     private fun dropInconsistentClips() {
         val s = session ?: return
-        val off = s.cameraClockOffsetMs ?: return
-        val bad = s.laps.filter { l -> l.clip != null && l.clipStartMs != null &&
-            kotlin.math.abs(l.clipStartMs - off - l.recStartWallMs) > ClipMatcher.KNOWN_OFFSET_TOL_MS }
+        // Only trust a clock that two or more matched runs agree on; drop the matches that don't fit it.
+        val (_, bad) = clockConsensus(s) ?: return
         if (bad.isEmpty()) return
         update(s.copy(laps = s.laps.map { l -> if (l !in bad) l else l.copy(clip = null, clipStartMs = null, clipDurationS = null,
             clipOffsetMs = null, gyroFile = null, gyroSamples = null, videoStartMs = null, syncOffsetMs = null, syncR = null) }))

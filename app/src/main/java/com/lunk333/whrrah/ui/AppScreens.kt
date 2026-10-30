@@ -678,16 +678,18 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 // "0:00.000" with tabular digits is ~5 em wide; also leave room for the two text lines.
                 val byWidth = maxWidth.value / 5.2f
-                val byHeight = (maxHeight.value - 70f) / 1.25f
+                val byHeight = (maxHeight.value - 90f) / 1.25f
                 val size = minOf(byWidth, byHeight).coerceAtLeast(24f)
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                     Text("Lap Time", style = MaterialTheme.typography.titleMedium)
                     Text(fmtTimer(ms), color = color, maxLines = 1, softWrap = false,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum",
                             fontSize = size.sp, lineHeight = (size * 1.1f).sp))
+                    val big = MaterialTheme.typography.titleMedium.let { it.copy(fontSize = it.fontSize * 1.5f) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(caption, style = MaterialTheme.typography.titleMedium)
-                        Text("Best " + (s.bestLapMs?.let(::fmtTimer) ?: "—"), style = MaterialTheme.typography.titleMedium)
+                        Text(caption, style = big)
+                        Text("Best " + (s.bestLapMs?.let(::fmtTimer) ?: "—"), style = big)
                     }
                 }
             }

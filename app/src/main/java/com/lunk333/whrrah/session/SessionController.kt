@@ -96,6 +96,7 @@ class SessionController private constructor(context: Context) {
                 note = lap.note ?: "interrupted — the app was closed mid-run")
         }).also { store.save(it) }
         loadWalkPath(s)
+        dropInconsistentClips()
         retimeAll()
         // Sync any run that has both the clip's gyro and RaceBox data but no sync yet.
         session?.laps?.filter { it.gyroFile != null && it.imuFile != null && it.videoStartMs == null }?.forEach { syncRun(it.n) }
@@ -226,13 +227,14 @@ class SessionController private constructor(context: Context) {
      */
     private fun matchClips(videos: List<CameraFile>) {
         if (setupCheckRunning) return onSetupCheckList(videos)
+        dropInconsistentClips()
         val s = session ?: return
         val taken = s.laps.mapNotNull { it.clip }.toSet()
         val runs = s.laps.filter { !it.recording && it.clip == null && it.expectsClip }
             .map { ClipMatcher.RunSpan(it.n, it.recStartWallMs, it.recStopWallMs!!) }
         val clips = videos.filter { it.name !in taken }
             .mapNotNull { f -> clipStartMs(f)?.let { ClipMatcher.ClipSpan(f.name, it, f.durationSec) } }
-        val result = ClipMatcher.match(runs, clips)
+        val result = ClipMatcher.match(runs, clips, knownOffsetMs = s.cameraClockOffsetMs)
         if (result != null) {
             val byName = videos.associateBy { it.name }
             var cur = session ?: return
@@ -326,6 +328,21 @@ class SessionController private constructor(context: Context) {
         setupCheck = msg
         if (link.phase != OsmoLink.Phase.IDLE) link.disconnect()
         main.postDelayed({ camera.start() }, 2000)   // back to the Bluetooth remote
+    }
+
+    /**
+     * Un-match runs whose clip doesn't fit the session's camera clock offset (> 30 s out) — from before
+     * the matcher was tied to it, a lone run could be given a random clip. Clears its gyro + sync too.
+     */
+    private fun dropInconsistentClips() {
+        val s = session ?: return
+        val off = s.cameraClockOffsetMs ?: return
+        val bad = s.laps.filter { l -> l.clip != null && l.clipStartMs != null &&
+            kotlin.math.abs(l.clipStartMs - off - l.recStartWallMs) > ClipMatcher.KNOWN_OFFSET_TOL_MS }
+        if (bad.isEmpty()) return
+        update(s.copy(laps = s.laps.map { l -> if (l !in bad) l else l.copy(clip = null, clipStartMs = null, clipDurationS = null,
+            clipOffsetMs = null, gyroFile = null, gyroSamples = null, videoStartMs = null, syncOffsetMs = null, syncR = null) }))
+        activity = "Un-matched run " + bad.joinToString { "${it.n}" } + " — its clip didn't fit this session's camera clock"
     }
 
     // ---- Match clips: one WiFi visit after the event -----------------------------------------

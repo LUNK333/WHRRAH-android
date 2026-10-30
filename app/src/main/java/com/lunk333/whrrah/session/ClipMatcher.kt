@@ -25,6 +25,8 @@ object ClipMatcher {
 
     const val START_TOL_MS = 6_000L
     private const val MAX_OFFSET_MS = 26 * 3_600_000L
+    const val KNOWN_OFFSET_TOL_MS = 30_000L
+    private const val LONE_MATCH_MAX_OFFSET_MS = 120_000L
 
     fun durationOk(run: RunSpan, clip: ClipSpan): Boolean {
         if (clip.durationS <= 0) return true
@@ -32,16 +34,24 @@ object ClipMatcher {
         return abs(runS - clip.durationS) <= maxOf(5.0, runS * 0.1)
     }
 
-    fun match(runs: List<RunSpan>, clips: List<ClipSpan>, startTolMs: Long = START_TOL_MS): Result? {
+    /**
+     * [knownOffsetMs]: the camera clock offset already found for this session (from earlier matches).
+     * New matches must agree with it to within [KNOWN_OFFSET_TOL_MS] — otherwise a lone leftover run
+     * can be "matched" to any short clip at any offset.
+     */
+    fun match(runs: List<RunSpan>, clips: List<ClipSpan>, startTolMs: Long = START_TOL_MS, knownOffsetMs: Long? = null): Result? {
         if (runs.isEmpty() || clips.isEmpty()) return null
         var bestOffset = 0L
         var bestCount = -1
-        val candidates = runs.flatMap { r -> clips.map { c -> c.startMs - r.startMs } }.filter { abs(it) <= MAX_OFFSET_MS }.distinct()
+        val candidates = runs.flatMap { r -> clips.map { c -> c.startMs - r.startMs } }
+            .filter { abs(it) <= MAX_OFFSET_MS && (knownOffsetMs == null || abs(it - knownOffsetMs) <= KNOWN_OFFSET_TOL_MS) }.distinct()
         for (d in candidates) {
             val n = pairUp(runs, clips, d, startTolMs).size
             if (n > bestCount || (n == bestCount && abs(d) < abs(bestOffset))) { bestCount = n; bestOffset = d }
         }
         if (bestCount <= 0) return null
+        // A single pair says nothing about the clock: without a known offset, only trust a small one.
+        if (bestCount == 1 && knownOffsetMs == null && abs(bestOffset) > LONE_MATCH_MAX_OFFSET_MS) return null
         // Refine: the median of the matched pairs' raw differences.
         val first = pairUp(runs, clips, bestOffset, startTolMs)
         val diffs = first.map { (r, c) -> c.startMs - r.startMs }.sorted()

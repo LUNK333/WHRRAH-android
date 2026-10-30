@@ -60,6 +60,18 @@ class ClipMatcherTest {
     }
 
     @Test
+    fun aLoneLeftoverRunIsNotGivenARandomClip() {
+        // Run 1 was an accidental 1 s tap; the camera has short clips from an hour earlier.
+        val lone = listOf(run(1, 3600, 1))
+        val old = listOf(clip("yesterday", 0, 3, 15), clip("other", 120, 4, 15))
+        assertNull("no known offset, far-off lone pair", ClipMatcher.match(lone, old))
+        assertNull("known offset 15 s rules them out", ClipMatcher.match(lone, old, knownOffsetMs = 15_000))
+        // The right clip, at the session's known offset, is still accepted.
+        val r = ClipMatcher.match(lone, old + clip("right", 3600, 1, 15), knownOffsetMs = 15_000)!!
+        assertEquals(listOf(1 to "right"), r.matches.map { it.n to it.clip })
+    }
+
+    @Test
     fun nothingToMatch() {
         assertNull(ClipMatcher.match(emptyList(), listOf(clip("A", 0, 10))))
         assertNull(ClipMatcher.match(runs, emptyList()))

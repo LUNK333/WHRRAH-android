@@ -122,7 +122,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 | L3 | Lap detection from RaceBox GPS: line-crossing with interpolation between fixes for sub-sample timing | any | DONE | desk |
 | L4 | Check lap times vs AiM Solo on the same session (run both in car once) | car | TODO | |
 | L5 | Keep logging alive with screen off / app in background (foreground service, wake lock, BLE reconnect) | any | TODO | |
-| L6 | v2: live in-car display — current/last/best lap, predictive delta | any | TODO | |
+| L6 | v2: live in-car display — current/last/best lap, predictive delta — live delta + chevron bar in landscape done (`session/LapDelta.kt`, spec `docs/lap-delta-spec.md`); test in the car | any | DOING | desk |
 | L7 | v2: lap comparison view | any | TODO | |
 
 ## 4. App core (existing milestones from design-doc §5)
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 ## Session log
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
+- 2026-10-30 · desk · L6 · Live lap delta per docs/lap-delta-spec.md, adapted to autocross (separate start/finish, open course): reference = fastest gap-free timed run, picked at run start; projection window + 15 m lateral limit + reacquire. Replay of LAPTIMING TEST vs run 4: final deltas match lap differences to <0.3 ms, ~1–5 µs/fix. Landscape panel: 10+10 chevron bar (0.2 s each), red left = behind, green right = ahead, number in the middle. Next: try it in the car.
 - 2026-10-29 · desk · G1, G3, M4 · Widget overlay port: `overlay/` reads/writes desktop layout JSON (round-trips unknown fields), renders all 6 desktop widget types (port of the export drawing code), run data under AiM channel names from the GPS/RaceBox logs. Layouts folder `Android/data/com.lunk333.whrrah/files/layouts/` (bundled `layout_phone.json` seeded). Run viewer: Show overlay checkbox + layout picker, video framed like the desktop export crop. Dev → Overlay preview. Next: check on real clips; no layout editing yet (G4).
 - 2026-10-29 · desk · B1 · Camera clip list after WiFi join: an empty first SD answer (card not ready after a cold wake) now re-asks after ~3 s instead of ~12 s; the re-ask stops once its answer settles. Vendored osmosis patch, see VENDORED.md.
 

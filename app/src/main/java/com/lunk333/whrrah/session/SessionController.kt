@@ -208,6 +208,7 @@ class SessionController private constructor(context: Context) {
         val lap = Lap(n = s.laps.size + 1, recStartWallMs = wallMs, manual = manual)
         update(s.copy(laps = s.laps + lap))
         liveStartElapsedMs = null; liveLapMs = null; liveLastFix = null
+        startDelta(s)
         openGpsLog(lap.n)
         activity = "Run ${lap.n} recording — logging ${gps.name}"
     }
@@ -557,12 +558,49 @@ class SessionController private constructor(context: Context) {
         s.finish?.let { fin -> LapTimer.crossings(pair, fin).firstOrNull()?.let { liveLapMs = Math.round(it.tMs - start) } }
     }
 
+    // ---- live delta -----------------------------------------------------------------------------
+
+    /** Live delta to the session's best run, for the run in progress (held after it stops). */
+    var liveDelta by mutableStateOf<DeltaState?>(null); private set
+    /** The run the live delta is measured against (null = no reference yet: the first timed run becomes it). */
+    var deltaRefRun by mutableStateOf<Int?>(null); private set
+    private var deltaTracker: DeltaTracker? = null
+    private var deltaRefCache: Pair<String, ReferenceLap>? = null
+
+    /**
+     * Picks the reference at the start of a run — the fastest timed run whose log has no gaps — so it
+     * never changes mid-run; a new best becomes the reference from the next run on.
+     */
+    private fun startDelta(s: Session) {
+        liveDelta = null; deltaTracker = null; deltaRefRun = null
+        val st = s.start ?: return
+        val proj = LocalProjector(st.lat, st.lon)
+        var ref: ReferenceLap? = null
+        for (lap in s.laps.filter { it.lapTimeMs != null && it.startCrossMs != null && it.finishCrossMs != null && it.gpsFile != null }.sortedBy { it.lapTimeMs }) {
+            val key = "${s.id}/${lap.n}/${lap.startCrossMs}/${lap.finishCrossMs}/${st.lat},${st.lon}"
+            val r = deltaRefCache?.takeIf { it.first == key }?.second ?: runCatching {
+                ReferenceLap.build(LapTimer.readGpsCsv(File(store.gpsDir(s.id), lap.gpsFile!!)), lap.startCrossMs!!.toDouble(), lap.finishCrossMs!!.toDouble(), proj)
+            }.getOrNull()?.also { deltaRefCache = key to it }
+            if (r != null && r.valid) { ref = r; deltaRefRun = lap.n; break }
+        }
+        deltaTracker = DeltaTracker(ref, proj, s.start, s.finish)
+    }
+
+    private fun liveDeltaFix(fix: GpsFix) {
+        if (currentRun == null) return
+        val tr = deltaTracker ?: return
+        // Receiver time (the RaceBox's own fix time), not the phone's arrival time.
+        tr.onFix((if (fix.utcMs > 0) fix.utcMs else fix.elapsedMs).toDouble(), fix.lat, fix.lon, fix.speedMps?.toDouble())
+        if (tr.state != liveDelta) liveDelta = tr.state
+    }
+
     /** The last ~30 s of fixes from the active source, for working out the direction of travel. */
     private val recentFixes = ArrayDeque<GpsFix>()
 
     private fun onFix(fix: GpsFix, source: String) {
         recentFixes.addLast(fix)
         liveTiming(fix)
+        liveDeltaFix(fix)
         while (recentFixes.isNotEmpty() && fix.elapsedMs - recentFixes.first().elapsedMs > HeadingEstimator.WINDOW_MS + 2000) recentFixes.removeFirst()
         walkWriter?.let { ww ->
             runCatching { ww.write("${fix.elapsedMs},${fix.utcMs},${fix.lat},${fix.lon},${fix.speedMps ?: ""},${fix.headingDeg ?: ""},${fix.accuracyM ?: ""},$source\n") }

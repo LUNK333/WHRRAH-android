@@ -63,7 +63,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA }
+enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
 @Composable
@@ -91,10 +91,11 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
             Screen.SESSION -> SessionScreen(m, onViewRuns = { go(Screen.VIEW_RUNS) })
             Screen.VIEW_RUNS -> RunViewerScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
-            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) })
+            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) }, onOverlay = { go(Screen.DEV_OVERLAY) })
             Screen.DEV_RACEBOX -> com.lunk333.whrrah.racebox.RaceBoxScreen(m)
             Screen.DEV_CAMERA -> CameraScreen(m)
             Screen.DEV_DATA -> legacyData(m)
+            Screen.DEV_OVERLAY -> OverlayPreviewScreen(m)
         }
     }
 }
@@ -109,6 +110,7 @@ private fun title(s: Screen) = when (s) {
     Screen.DEV_CAMERA -> "Camera test bench"
     Screen.DEV_RACEBOX -> "RaceBox test panel"
     Screen.DEV_DATA -> "CSV / XRK viewer (legacy)"
+    Screen.DEV_OVERLAY -> "Overlay preview"
     Screen.VIEW_RUNS -> "View runs"
 }
 
@@ -568,10 +570,11 @@ private fun EditableList(title: String, values: List<String>, onAdd: (String) ->
 }
 
 @Composable
-private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () -> Unit, onData: () -> Unit) {
+private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () -> Unit, onData: () -> Unit, onOverlay: () -> Unit) {
     Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onCamera, modifier = Modifier.fillMaxWidth()) { Text("Camera test bench (pair, clips, gyro, loop tests)") }
         Button(onClick = onRaceBox, modifier = Modifier.fillMaxWidth()) { Text("RaceBox test panel (connect, live data, CSV log)") }
+        Button(onClick = onOverlay, modifier = Modifier.fillMaxWidth()) { Text("Overlay preview (layout + a saved run, no video)") }
         OutlinedButton(onClick = onData, modifier = Modifier.fillMaxWidth()) { Text("CSV / XRK viewer (legacy)") }
     }
 }

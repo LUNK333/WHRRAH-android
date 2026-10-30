@@ -141,9 +141,9 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 
 | ID | Task | Where | Status | Who |
 |---|---|---|---|---|
-| G1 | Inventory desktop WHRRAH widgets + their settings; pick v1 set for phone | any | TODO | |
+| G1 | Inventory desktop WHRRAH widgets + their settings; pick v1 set for phone | any | DONE | desk |
 | G2 | Wireframe phone screens: session/source connect, live dashboard, editor, export | any | TODO | |
-| G3 | Port widgets: Lap Timer, Numeric, Bar Graph, Track Map (v1); Data Trace (later) | any | TODO | |
+| G3 | Port widgets: Lap Timer, Numeric, Bar Graph, Track Map (v1); Data Trace (later) — all 6 desktop types drawn in `overlay/` (view only); check on real clips | any | DOING | desk |
 | G4 | Touch editing UX: select, drag, pinch-resize, snap, property sheet | any | TODO | |
 | G5 | Test on real phone; decide if tablet layout needed (Compose window size classes make this cheap later) | car | TODO | |
 | G6 | Live in-car display mode (big text, glanceable) — only if wanted | any | TODO | |
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 ## Session log
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
+- 2026-10-29 · desk · G1, G3, M4 · Widget overlay port: `overlay/` reads/writes desktop layout JSON (round-trips unknown fields), renders all 6 desktop widget types (port of the export drawing code), run data under AiM channel names from the GPS/RaceBox logs. Layouts folder `Android/data/com.lunk333.whrrah/files/layouts/` (bundled `layout_phone.json` seeded). Run viewer: Show overlay checkbox + layout picker, video framed like the desktop export crop. Dev → Overlay preview. Next: check on real clips; no layout editing yet (G4).
 - 2026-10-29 · desk · B1 · Camera clip list after WiFi join: an empty first SD answer (card not ready after a cold wake) now re-asks after ~3 s instead of ~12 s; the re-ask stops once its answer settles. Vendored osmosis patch, see VENDORED.md.
 
 - 2026-10-29 · desk · B1 · Camera setup checks over Bluetooth: mode (Video/Photo/Slow-mo… detected, one-tap Switch to video works) and stabilization (detected) — warning banner + notification. FOV and color mode are NOT reported over the R-SDK link (only the battery byte moved while toggling them), so a wrong FOV only shows up after the fact, as "clip has no gyro" at Match clips.

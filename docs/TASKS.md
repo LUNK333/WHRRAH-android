@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 ## Session log
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
+- 2026-10-29 · desk · B1 · Camera clip list after WiFi join: an empty first SD answer (card not ready after a cold wake) now re-asks after ~3 s instead of ~12 s; the re-ask stops once its answer settles. Vendored osmosis patch, see VENDORED.md.
 
 - 2026-10-29 · desk · B1 · Camera setup checks over Bluetooth: mode (Video/Photo/Slow-mo… detected, one-tap Switch to video works) and stabilization (detected) — warning banner + notification. FOV and color mode are NOT reported over the R-SDK link (only the battery byte moved while toggling them), so a wrong FOV only shows up after the fact, as "clip has no gyro" at Match clips.
 - 2026-10-29 · desk · L3, I4 · Real test session (LAPTIMING TEST): RaceBox 25 Hz with zero dropped fixes, ±0.64 m; 3 timed runs 23.893 / 23.256 / 22.433 s, matching an independent recompute to the ms, crossings 0.4–1 m off line centre. Video sync on real data r = 0.98 on all 3 clips; the video starts ~0.45–0.52 s after Start run. Camera clock still ~14.6 s fast after a WiFi time sync (matcher handles it).

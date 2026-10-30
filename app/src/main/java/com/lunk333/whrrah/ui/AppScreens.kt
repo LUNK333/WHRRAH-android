@@ -73,14 +73,17 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
 
     val screen = stack.last()
     Column(modifier.fillMaxSize()) {
-        Header(title(screen), showBack = stack.size > 1, onBack = ::back)
+        val context = LocalContext.current
+        Header(title(screen), showBack = stack.size > 1, onBack = ::back) {
+            if (screen == Screen.SESSION) TextButton(onClick = { SessionController.get(context).close(); back() }) { Text("Close session") }
+        }
         val m = Modifier.fillMaxSize()
         when (screen) {
             Screen.HOME -> HomeScreen(m, onNew = { go(Screen.NEW_SESSION) }, onOpen = { go(Screen.OPEN_SESSION) },
                 onResume = { go(Screen.SESSION) }, onSettings = { go(Screen.SETTINGS) }, onDev = { go(Screen.DEV) })
             Screen.NEW_SESSION -> NewSessionScreen(m, onCreated = { replace(Screen.SESSION) })
             Screen.OPEN_SESSION -> OpenSessionScreen(m, onOpened = { replace(Screen.SESSION) })
-            Screen.SESSION -> SessionScreen(m, onClosed = ::back, onViewRuns = { go(Screen.VIEW_RUNS) })
+            Screen.SESSION -> SessionScreen(m, onViewRuns = { go(Screen.VIEW_RUNS) })
             Screen.VIEW_RUNS -> RunViewerScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
             Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) })
@@ -105,10 +108,11 @@ private fun title(s: Screen) = when (s) {
 }
 
 @Composable
-private fun Header(title: String, showBack: Boolean, onBack: () -> Unit) {
+private fun Header(title: String, showBack: Boolean, onBack: () -> Unit, actions: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (showBack) TextButton(onClick = onBack) { Text("←  Back") } else Spacer(Modifier.size(16.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp).weight(1f))
+        actions()
     }
     HorizontalDivider()
 }
@@ -263,7 +267,7 @@ private fun OpenSessionScreen(modifier: Modifier, onOpened: () -> Unit) {
 // ---- session ---------------------------------------------------------------------------------
 
 @Composable
-private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit, onViewRuns: () -> Unit) {
+private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit) {
     val context = LocalContext.current
     val ctl = remember { SessionController.get(context) }
     val link = remember { OsmoLink.get(context) }
@@ -306,7 +310,6 @@ private fun SessionScreen(modifier: Modifier, onClosed: () -> Unit, onViewRuns: 
                 OutlinedButton(onClick = ctl::matchClipsNow, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null) {
                     Text(if (ctl.matching) "Matching…" else "Match clips (camera WiFi)")
                 }
-                OutlinedButton(onClick = { ctl.close(); onClosed() }) { Text("Close session") }
             }
         }
     }

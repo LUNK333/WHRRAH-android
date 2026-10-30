@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.withStyle
 import androidx.core.content.ContextCompat
 import com.lunk333.whrrah.osmo.CameraScreen
@@ -79,17 +81,23 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
     Column(modifier.fillMaxSize()) {
         val ctl = SessionController.get(LocalContext.current)
         val headerTitle = if (screen == Screen.SESSION) ctl.session?.event ?: title(screen) else title(screen)
-        Header(headerTitle, showBack = stack.size > 1, onBack = ::back) {
-            // Not mid-run: closing would cut the run's logging off.
-            if (screen == Screen.SESSION) TextButton(onClick = { ctl.close(); back() }, enabled = ctl.currentRun == null) { Text("Close session") }
+        val header = @Composable { atBottom: Boolean ->
+            Header(headerTitle, showBack = stack.size > 1, onBack = ::back, atBottom = atBottom) {
+                // Not mid-run: closing would cut the run's logging off.
+                if (screen == Screen.SESSION) TextButton(onClick = { ctl.close(); back() }, enabled = ctl.currentRun == null) { Text("Close session") }
+            }
         }
+        // Landscape session screen: no header up top — it slides up from the bottom on a swipe (SessionLandscape).
+        val landscapeSession = screen == Screen.SESSION && ctl.session != null &&
+            androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (!landscapeSession) header(false)
         val m = Modifier.fillMaxSize()
         when (screen) {
             Screen.HOME -> HomeScreen(m, onNew = { go(Screen.NEW_SESSION) }, onOpen = { go(Screen.OPEN_SESSION) },
                 onResume = { go(Screen.SESSION) }, onSettings = { go(Screen.SETTINGS) }, onDev = { go(Screen.DEV) })
             Screen.NEW_SESSION -> NewSessionScreen(m, onCreated = { replace(Screen.SESSION) })
             Screen.OPEN_SESSION -> OpenSessionScreen(m, onOpened = { replace(Screen.SESSION) })
-            Screen.SESSION -> SessionScreen(m, onViewRuns = { go(Screen.VIEW_RUNS) })
+            Screen.SESSION -> SessionScreen(m, onViewRuns = { go(Screen.VIEW_RUNS) }, header = { header(true) })
             Screen.VIEW_RUNS -> RunViewerScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
             Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) }, onOverlay = { go(Screen.DEV_OVERLAY) })
@@ -116,7 +124,8 @@ private fun title(s: Screen) = when (s) {
 }
 
 @Composable
-private fun Header(title: String, showBack: Boolean, onBack: () -> Unit, actions: @Composable () -> Unit = {}) {
+private fun Header(title: String, showBack: Boolean, onBack: () -> Unit, atBottom: Boolean = false, actions: @Composable () -> Unit = {}) {
+    if (atBottom) HorizontalDivider()
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (showBack) TextButton(onClick = onBack) { Text("←  Back") } else Spacer(Modifier.size(16.dp))
         Text(title, style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -124,7 +133,7 @@ private fun Header(title: String, showBack: Boolean, onBack: () -> Unit, actions
             modifier = Modifier.padding(horizontal = 4.dp).weight(1f))
         actions()
     }
-    HorizontalDivider()
+    if (!atBottom) HorizontalDivider()
 }
 
 // ---- shared bits -----------------------------------------------------------------------------
@@ -277,14 +286,14 @@ private fun OpenSessionScreen(modifier: Modifier, onOpened: () -> Unit) {
 // ---- session ---------------------------------------------------------------------------------
 
 @Composable
-private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit) {
+private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @Composable () -> Unit) {
     val context = LocalContext.current
     val ctl = remember { SessionController.get(context) }
     val link = remember { OsmoLink.get(context) }
     val s = ctl.session ?: return Text("No session open.", modifier.padding(16.dp))
     // Phone turned sideways (e.g. in a windshield mount): just the timer and the run button.
     if (androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
-        android.content.res.Configuration.ORIENTATION_LANDSCAPE) return SessionLandscape(modifier, ctl, s)
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE) return SessionLandscape(modifier, ctl, s, header)
 
     LazyColumn(modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -666,7 +675,7 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
  * right. Everything else (track, run list, clips) is on the portrait screen.
  */
 @Composable
-private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Session) {
+private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Session, header: @Composable () -> Unit) {
     val (ms, caption, color) = lapTimerState(ctl, s)
     // Full screen here: hide the status and navigation bars — a swipe from the edge brings them back for a moment.
     val view = androidx.compose.ui.platform.LocalView.current
@@ -677,7 +686,18 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
         bars?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
         onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
-    Row(modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    // The header (Back / Close session) is hidden; swipe up anywhere to bring it up from the bottom,
+    // swipe down or wait a few seconds to put it away.
+    var showHeader by remember { mutableStateOf(false) }
+    LaunchedEffect(showHeader) { if (showHeader) { kotlinx.coroutines.delay(HEADER_SHOW_MS); showHeader = false } }
+    val swipe = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    Box(modifier.pointerInput(Unit) {
+        var dy = 0f
+        detectVerticalDragGestures(onDragStart = { dy = 0f }, onDragEnd = {
+            if (dy < -swipe) showHeader = true else if (dy > swipe) showHeader = false
+        }) { _, d -> dy += d }
+    }) {
+    Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.weight(4.5f).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 // Delta bar across the full width: each chevron cell is 1/20 of what the number leaves.
@@ -708,7 +728,16 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
             LandscapeRunButton(ctl, Modifier.fillMaxWidth().weight(1f))
         }
     }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = showHeader, modifier = Modifier.align(Alignment.BottomCenter),
+        enter = androidx.compose.animation.slideInVertically { it }, exit = androidx.compose.animation.slideOutVertically { it },
+    ) {
+        androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background) { Column { header() } }
+    }
+    }
 }
+
+private const val HEADER_SHOW_MS = 5000L
 
 /**
  * Live delta to the session's best run as a chevron bar, `<<<<<<<<<< +0.42 >>>>>>>>>>`, drawn to the

@@ -301,6 +301,36 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
         joinedWithBssid = bssid != null
         setPhase(Phase.JOINING_WIFI, "Joining camera WiFi \"$s\"" + if (bssid == null) " — accept the Android prompt" else "…")
         ap = ApJoiner(context, this).also { it.join(s, p, bssid = bssid) }
+        joinStartedAt = SystemClock.elapsedRealtime()
+        joinAttempt = 1
+        main.removeCallbacks(joinWatch)
+        main.postDelayed(joinWatch, 1000)
+    }
+
+    private var joinStartedAt = 0L
+    private var joinAttempt = 0
+
+    /**
+     * While a join is pending: show the wait, keep waking the camera's WiFi over BLE every 3 s (right
+     * after a previous visit the camera may be turning its AP off), and re-request the network every
+     * 12 s so Android scans again — the second time by name, in case the saved BSSID is the problem.
+     */
+    private val joinWatch = object : Runnable {
+        override fun run() {
+            if (phase != Phase.JOINING_WIFI) return
+            val secs = ((SystemClock.elapsedRealtime() - joinStartedAt) / 1000).toInt()
+            status = "Waiting for the camera's WiFi… $secs s"
+            if (secs % 3 == 0) gatt?.writeCommand(OsmoCommands.session5310())
+            if (secs > 0 && secs % 12 == 0 && joinAttempt < 4) {
+                joinAttempt++
+                val byName = joinAttempt >= 2
+                logLine("WiFi not up after $secs s — asking again" + if (byName) " (by name)" else "")
+                ap?.release()
+                joinedWithBssid = false
+                ap = ApJoiner(context, this@OsmoLink).also { it.join(ssid!!, password!!) }
+            }
+            main.postDelayed(this, 1000)
+        }
     }
 
     private var joinedWithBssid = false

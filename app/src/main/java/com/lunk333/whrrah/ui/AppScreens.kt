@@ -662,7 +662,7 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
 }
 
 /**
- * Landscape session: the lap timer fills the left ~3/4 (time sized to the space), the run button the
+ * Landscape session: the lap timer fills the left ~4/5 (time sized to the space), the run button the
  * right. Everything else (track, run list, clips) is on the portrait screen.
  */
 @Composable
@@ -678,7 +678,7 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
         onDispose { bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
     Row(modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(Modifier.weight(3f).fillMaxHeight()) {
+        Card(Modifier.weight(4.5f).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 // Delta bar across the full width: each chevron cell is 1/20 of what the number leaves.
                 val barH = (maxWidth.value * (1 - DELTA_NUMBER_FRAC) / (2 * DELTA_CHEVRONS) * 1.9f).coerceAtMost(maxHeight.value * 0.3f)

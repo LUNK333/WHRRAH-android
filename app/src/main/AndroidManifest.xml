@@ -48,6 +48,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="fullSensor"
             android:theme="@style/Theme.WHRRAH">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

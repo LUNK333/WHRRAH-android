@@ -73,9 +73,11 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
 
     val screen = stack.last()
     Column(modifier.fillMaxSize()) {
-        val context = LocalContext.current
-        Header(title(screen), showBack = stack.size > 1, onBack = ::back) {
-            if (screen == Screen.SESSION) TextButton(onClick = { SessionController.get(context).close(); back() }) { Text("Close session") }
+        val ctl = SessionController.get(LocalContext.current)
+        val headerTitle = if (screen == Screen.SESSION) ctl.session?.event ?: title(screen) else title(screen)
+        Header(headerTitle, showBack = stack.size > 1, onBack = ::back) {
+            // Not mid-run: closing would cut the run's logging off.
+            if (screen == Screen.SESSION) TextButton(onClick = { ctl.close(); back() }, enabled = ctl.currentRun == null) { Text("Close session") }
         }
         val m = Modifier.fillMaxSize()
         when (screen) {
@@ -111,7 +113,9 @@ private fun title(s: Screen) = when (s) {
 private fun Header(title: String, showBack: Boolean, onBack: () -> Unit, actions: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (showBack) TextButton(onClick = onBack) { Text("←  Back") } else Spacer(Modifier.size(16.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp).weight(1f))
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp).weight(1f))
         actions()
     }
     HorizontalDivider()
@@ -276,7 +280,6 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit) {
     LazyColumn(modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column(Modifier.padding(top = 8.dp)) {
-                Text(s.event, style = MaterialTheme.typography.headlineSmall)
                 Text("${s.date} · ${s.driver.ifBlank { "?" }} · ${s.car.ifBlank { "?" }}", style = MaterialTheme.typography.bodyMedium)
             }
         }

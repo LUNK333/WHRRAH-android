@@ -622,6 +622,33 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     }
 
     /**
+     * Download [f] (full resolution) to [out]. Blocking — call off the main thread with the WiFi up.
+     * Writes `<out>.part` and resumes it (the camera's HTTP server drops long transfers now and then),
+     * then renames it into place. [onProgress] gets (bytes so far, total; 0 = unknown).
+     */
+    fun downloadTo(f: CameraFile, out: java.io.File, onProgress: (Long, Long) -> Unit): Boolean {
+        val path = PathAddressing.original(f)
+        val total = f.sizeBytes.takeIf { it > 0 } ?: http.head(path).coerceAtLeast(0)
+        val part = java.io.File(out.path + ".part")
+        out.parentFile?.mkdirs()
+        for (attempt in 1..8) {
+            val start = if (part.isFile) part.length() else 0L
+            if (total > 0 && start >= total) break
+            val r = java.io.FileOutputStream(part, start > 0).use { os -> http.download(path, os, start) { onProgress(it, total) } }
+            when (r) {
+                dev.konraditurbe.osmosis.net.HttpClient.Fetch.DONE -> break
+                dev.konraditurbe.osmosis.net.HttpClient.Fetch.RANGE_IGNORED -> part.delete()
+                dev.konraditurbe.osmosis.net.HttpClient.Fetch.INTERRUPTED -> { logLine("download ${f.name}: interrupted at ${part.length()} B — resuming"); Thread.sleep(1000) }
+                dev.konraditurbe.osmosis.net.HttpClient.Fetch.FAILED -> { if (attempt >= 3) return false; Thread.sleep(1500) }
+            }
+            if (attempt == 8) return false
+        }
+        if (total > 0 && part.length() < total) return false
+        out.delete()
+        return part.renameTo(out).also { if (it) logLine("downloaded ${f.name} (${out.length() / 1_000_000} MB)") }
+    }
+
+    /**
      * The camera's own thumbnail for [f] (a JPEG screennail from the start of the clip, `.scr`; `.thm`
      * on cameras that name it that way), or null. Blocking: call off the main thread, with the WiFi up.
      */

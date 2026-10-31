@@ -36,6 +36,8 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.size
@@ -145,10 +147,13 @@ fun RunViewerScreen(modifier: Modifier) {
                     else "None of this session's runs have a clip on the camera yet.", style = MaterialTheme.typography.bodyMedium)
             }
             items(runs, key = { it.n }) { r ->
+                val onPhone = remember(r.clip, ctl.downloadsDone) { ctl.clipFile(s, r.clip!!).isFile }
                 RunRow(r, best = r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs, selected = r.n == selected,
                     thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
-                    onClick = { selected = r.n })
+                    onPhone = onPhone, progress = ctl.downloads[r.clip],
+                    onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) })
             }
+            if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
             item { Spacer(Modifier.height(8.dp)) }
         }
     }
@@ -170,11 +175,36 @@ fun RunViewerScreen(modifier: Modifier) {
     }
 }
 
-/** One run: thumbnail · "Run N (best)" with the clip name and length · lap time. */
+/**
+ * One run: thumbnail · "Run N (best)" with the clip name and length · lap time. Swipe it right to
+ * download the clip; a badge on the thumbnail shows it's on the phone (or the download's progress).
+ */
 @Composable
-private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?, onClick: () -> Unit) {
+private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?,
+                   onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val offset = remember { androidx.compose.animation.core.Animatable(0f) }
+    val maxPx = with(androidx.compose.ui.platform.LocalDensity.current) { 110.dp.toPx() }
+    Box {
+        // Revealed behind the card as it slides right.
+        Row(Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
+            .background(if (onPhone) Color(0xFF455A64) else Color(0xFF2E7D32)).padding(start = 20.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(if (onPhone) "✓ On the phone" else "⬇ Download", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        }
     Card(
-        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        Modifier.fillMaxWidth()
+            .offset { androidx.compose.ui.unit.IntOffset(offset.value.toInt(), 0) }
+            .pointerInput(r.n) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (offset.value > maxPx * 0.7f) onDownload()
+                        scope.launch { offset.animateTo(0f) }
+                    },
+                    onDragCancel = { scope.launch { offset.animateTo(0f) } },
+                ) { change, dx -> change.consume(); scope.launch { offset.snapTo((offset.value + dx).coerceIn(0f, maxPx)) } }
+            }
+            .clickable(onClick = onClick),
         colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
     ) {
         Row(Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -183,6 +213,7 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
                 contentAlignment = Alignment.Center) {
                 if (thumb != null) androidx.compose.foundation.Image(thumb, contentDescription = "Run ${r.n}",
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                DownloadBadge(onPhone, progress, Modifier.align(Alignment.BottomEnd).padding(4.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text("Run ${r.n}" + if (best) " (best)" else "", style = MaterialTheme.typography.titleLarge, maxLines = 1)
@@ -191,6 +222,29 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
                 r.clipDurationS?.let { Text("%d:%02d".format(it / 60, it % 60), style = MaterialTheme.typography.bodySmall) }
             }
             Text(fmtLap(r.lapTimeMs), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"))
+        }
+    }
+    }
+}
+
+/** On the thumbnail: a green tick when the clip is on the phone, a progress ring while downloading. */
+@Composable
+private fun DownloadBadge(onPhone: Boolean, progress: Float?, modifier: Modifier) {
+    when {
+        progress != null -> Box(modifier.size(22.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xCC000000)),
+            contentAlignment = Alignment.Center) {
+            if (progress >= 0f) androidx.compose.material3.CircularProgressIndicator(progress = { progress }, Modifier.size(18.dp),
+                color = Color(0xFF66BB6A), strokeWidth = 2.5.dp, trackColor = Color(0x44FFFFFF))
+            else androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), color = Color(0xFF66BB6A), strokeWidth = 2.5.dp)
+        }
+        onPhone -> Box(modifier.size(22.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFF2E7D32))) {
+            Canvas(Modifier.fillMaxSize().padding(5.dp)) {
+                val p = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(size.width * 0.05f, size.height * 0.55f); lineTo(size.width * 0.4f, size.height * 0.88f); lineTo(size.width * 0.95f, size.height * 0.15f)
+                }
+                drawPath(p, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = size.width * 0.2f,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+            }
         }
     }
 }
@@ -256,7 +310,12 @@ private fun RunPlayer(
     lap: Lap, file: CameraFile, s: Session, ctl: SessionController, layout: OverlayLayout?, fullscreen: Boolean,
     padStartS: Int, padEndS: Int, onFullscreen: () -> Unit, onSettings: () -> Unit, onPrev: (() -> Unit)?, onNext: (() -> Unit)?,
 ) {
-    val candidates = remember(file.path) { file.previewCandidates().map { "http://${OsmoLink.IP}$it" } }
+    // The phone's copy first when the clip has been downloaded (full res, no WiFi needed), then the
+    // camera's proxy, then its full-res file.
+    val local = remember(file.path) { ctl.clipFile(s, file.name).takeIf { it.isFile } }
+    val candidates = remember(file.path) {
+        listOfNotNull(local?.let { Uri.fromFile(it).toString() }) + file.previewCandidates().map { "http://${OsmoLink.IP}$it" }
+    }
     var idx by remember(file.path) { mutableStateOf(0) }
     var status by remember(file.path) { mutableStateOf("Loading ${if (candidates.size > 1) "preview" else "clip"}…") }
     var posMs by remember(file.path) { mutableStateOf(0) }
@@ -428,7 +487,10 @@ private fun RunPlayer(
         }
         }
         if (!fullscreen) Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Run ${lap.n} · ${file.name}" + (if (idx == 0 && candidates.size > 1) " · low-res preview" else " · full res") +
+            Text("Run ${lap.n} · ${file.name}" + (when {
+                    local != null && idx == 0 -> " · from the phone"
+                    idx == (if (local != null) 1 else 0) && candidates.size > (if (local != null) 2 else 1) -> " · low-res preview"
+                    else -> " · full res" }) +
                 (if (layout != null && lap.videoStartMs == null) if (videoStartMs != null) " · overlay timing approximate (not synced)" else " · no overlay: run isn't matched to its clip" else ""),
                 style = MaterialTheme.typography.bodySmall)
             if (!synced) Text("Not synced to the data yet — the lap overlay needs a sync (RaceBox + clip gyro).",

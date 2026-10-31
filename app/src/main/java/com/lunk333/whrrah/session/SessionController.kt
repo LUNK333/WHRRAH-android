@@ -53,6 +53,42 @@ class SessionController private constructor(context: Context) {
     /** One-line note on what the session machinery last did (shown on the session screen). */
     var activity by mutableStateOf(""); private set
 
+    // ---- clip downloads ------------------------------------------------------------------------
+
+    /** Clips being downloaded: name → progress 0..1 (−1 = size unknown). */
+    val downloads = androidx.compose.runtime.mutableStateMapOf<String, Float>()
+    /** Bumped when a download finishes, so "is it on the phone" gets re-read. */
+    var downloadsDone by mutableStateOf(0); private set
+
+    /** Where a session's clip is kept on the phone (the session's video/ folder). */
+    fun clipFile(s: Session, clip: String) = File(store.dir(s.id), "video/$clip")
+
+    /** Download run [n]'s clip (full res) off the camera into the session; needs the camera WiFi up (View runs). */
+    fun downloadClip(n: Int) {
+        val s = session ?: return
+        val clip = s.laps.firstOrNull { it.n == n }?.clip ?: return
+        val out = clipFile(s, clip)
+        if (out.isFile) { activity = "Run $n's clip is already on the phone"; return }
+        if (clip in downloads) return
+        val f = link.files.firstOrNull { it.name == clip } ?: run { activity = "Run $n's clip isn't in the camera's list"; return }
+        downloads[clip] = 0f
+        activity = "Downloading run $n's clip…"
+        Thread {
+            var shown = -1
+            val ok = runCatching {
+                link.downloadTo(f, out) { done, total ->
+                    val pct = if (total > 0) (done * 100 / total).toInt() else -1
+                    if (pct != shown) { shown = pct; main.post { if (clip in downloads) downloads[clip] = if (pct < 0) -1f else pct / 100f } }
+                }
+            }.getOrDefault(false)
+            main.post {
+                downloads.remove(clip); downloadsDone++
+                activity = if (ok) "Run $n's clip is on the phone (%d MB)".format(out.length() / 1_000_000)
+                    else "Run $n's clip didn't finish downloading — swipe it again to resume"
+            }
+        }.start()
+    }
+
     private var gpsWriter: BufferedWriter? = null
     private var gpsLapN = 0
 

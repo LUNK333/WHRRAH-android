@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.withStyle
 import androidx.core.content.ContextCompat
@@ -295,6 +296,28 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
     if (androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
         android.content.res.Configuration.ORIENTATION_LANDSCAPE) return SessionLandscape(modifier, ctl, s, header)
 
+    // Long-press a run → confirm → delete it.
+    var deleteAsk by remember { mutableStateOf<Int?>(null) }
+    deleteAsk?.let { n ->
+        val lap = s.laps.firstOrNull { it.n == n }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deleteAsk = null },
+            title = { Text("Delete run $n?") },
+            text = {
+                Text(if (lap?.recording == true) "Run $n is still recording — stop it first."
+                    else "Removes run $n" + (lap?.lapTimeMs?.let { " (${formatLap(it)})" } ?: "") +
+                        " from the session and deletes its GPS, RaceBox and gyro logs. This can't be undone." +
+                        (if (lap?.clip != null) " The video clip stays on the camera." else ""))
+            },
+            confirmButton = {
+                TextButton(onClick = { ctl.deleteRun(n); deleteAsk = null }, enabled = lap?.recording != true) {
+                    Text("Delete", color = if (lap?.recording == true) Color.Gray else Color(0xFFE53935))
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } },
+        )
+    }
+
     LazyColumn(modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column(Modifier.padding(top = 8.dp)) {
@@ -320,7 +343,7 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
             Text("Start recording from the mic remote ~30 s before the start line and stop ~30 s after the finish — each recording is one run.",
                 style = MaterialTheme.typography.bodySmall)
         }
-        items(s.laps.reversed(), key = { it.n }) { lap -> LapRow(lap) }
+        items(s.laps.reversed(), key = { it.n }) { lap -> LapRow(lap, onLongPress = { deleteAsk = lap.n }) }
 
         item {
             Button(onClick = onViewRuns, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null,
@@ -486,12 +509,15 @@ private fun TrackSketch(start: TrackLine?, finish: TrackLine?, walk: List<Geo.La
 }
 
 @Composable
-private fun LapRow(lap: Lap) {
+private fun LapRow(lap: Lap, onLongPress: () -> Unit) {
     val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
-    Card(Modifier.fillMaxWidth()) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Card(Modifier.fillMaxWidth().pointerInput(lap.n) {
+        detectTapGestures(onLongPress = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongPress() })
+    }) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Run ${lap.n}" + (if (lap.manual) " (phone)" else "") + if (lap.recording) "  ● recording" else "",
+                Text("Run ${lap.n}" + if (lap.recording) "  ● recording" else "",
                     style = MaterialTheme.typography.titleMedium)
                 Text(formatLap(lap.lapTimeMs), style = MaterialTheme.typography.titleMedium)
             }

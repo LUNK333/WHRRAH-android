@@ -205,7 +205,8 @@ class SessionController private constructor(context: Context) {
         val s = session ?: return
         // One run at a time: a camera start during a phone-started run (or vice versa) joins it.
         currentRun?.let { activity = "Run ${it.n} already recording"; return }
-        val lap = Lap(n = s.laps.size + 1, recStartWallMs = wallMs, manual = manual)
+        // After the highest number, not the count: a deleted run's number (and log files) aren't reused mid-list.
+        val lap = Lap(n = (s.laps.maxOfOrNull { it.n } ?: 0) + 1, recStartWallMs = wallMs, manual = manual)
         update(s.copy(laps = s.laps + lap))
         liveStartElapsedMs = null; liveLapMs = null; liveLastFix = null
         startDelta(s)
@@ -720,6 +721,21 @@ class SessionController private constructor(context: Context) {
 
     /** Current position + travel direction, for the track sketch. */
     val currentFix: GpsFix? get() = gps.lastFix
+
+    /**
+     * Delete a finished run: drops it from the session and deletes its GPS, RaceBox and gyro logs.
+     * The camera clip is left on the camera. Other runs keep their numbers.
+     */
+    fun deleteRun(n: Int) {
+        val s = session ?: return
+        val lap = s.laps.firstOrNull { it.n == n } ?: return
+        if (lap.recording || currentRun?.n == n) { activity = "Stop run $n before deleting it"; return }
+        lap.gpsFile?.let { runCatching { File(store.gpsDir(s.id), it).delete() } }
+        lap.imuFile?.let { runCatching { File(store.imuDir(s.id), it).delete() } }
+        lap.gyroFile?.let { runCatching { File(store.gyroDir(s.id), it).delete() } }
+        update(s.copy(laps = s.laps.filter { it.n != n }))
+        activity = "Deleted run $n"
+    }
 
     // ---- util --------------------------------------------------------------------------------
 

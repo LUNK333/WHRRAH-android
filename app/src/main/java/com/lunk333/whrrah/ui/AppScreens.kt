@@ -77,7 +77,7 @@ object UiChrome {
     var immersive by mutableStateOf(false)
 }
 
-enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY, DEV_HDR }
+enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, BROWSE_DOWNLOADS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY, DEV_HDR }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
 @Composable
@@ -105,11 +105,13 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
         val m = Modifier.fillMaxSize()
         when (screen) {
             Screen.HOME -> HomeScreen(m, onNew = { go(Screen.NEW_SESSION) }, onOpen = { go(Screen.OPEN_SESSION) },
-                onResume = { go(Screen.SESSION) }, onSettings = { go(Screen.SETTINGS) }, onDev = { go(Screen.DEV) })
+                onResume = { go(Screen.SESSION) }, onSettings = { go(Screen.SETTINGS) }, onDev = { go(Screen.DEV) },
+                onBrowse = { go(Screen.BROWSE_DOWNLOADS) })
             Screen.NEW_SESSION -> NewSessionScreen(m, onCreated = { replace(Screen.SESSION) })
             Screen.OPEN_SESSION -> OpenSessionScreen(m, onOpened = { replace(Screen.SESSION) })
             Screen.SESSION -> SessionScreen(m, onViewRuns = { go(Screen.VIEW_RUNS) }, header = { header(true) })
             Screen.VIEW_RUNS -> RunViewerScreen(m)
+            Screen.BROWSE_DOWNLOADS -> BrowseDownloadsScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
             Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) }, onOverlay = { go(Screen.DEV_OVERLAY) }, onHdr = { go(Screen.DEV_HDR) })
             Screen.DEV_RACEBOX -> com.lunk333.whrrah.racebox.RaceBoxScreen(m)
@@ -134,6 +136,7 @@ private fun title(s: Screen) = when (s) {
     Screen.DEV_OVERLAY -> "Overlay preview"
     Screen.DEV_HDR -> "HDR chevron test"
     Screen.VIEW_RUNS -> "View runs"
+    Screen.BROWSE_DOWNLOADS -> "Downloaded runs"
 }
 
 @Composable
@@ -228,6 +231,7 @@ private fun formatLap(ms: Long?): String = ms?.let { "%d:%02d.%03d".format(it / 
 @Composable
 private fun HomeScreen(
     modifier: Modifier, onNew: () -> Unit, onOpen: () -> Unit, onResume: () -> Unit, onSettings: () -> Unit, onDev: () -> Unit,
+    onBrowse: () -> Unit,
 ) {
     val context = LocalContext.current
     val sessions = remember { SessionController.get(context) }
@@ -238,6 +242,7 @@ private fun HomeScreen(
         }
         Button(onClick = onNew, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("New session") }
         OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("Open session") }
+        OutlinedButton(onClick = onBrowse, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("Browse downloaded runs") }
         OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("Settings") }
         OutlinedButton(onClick = onDev, modifier = Modifier.fillMaxWidth()) { Text("Dev options") }
         ConnectionStatus()

@@ -64,8 +64,8 @@ class SessionController private constructor(context: Context) {
     fun clipFile(s: Session, clip: String) = File(store.dir(s.id), "video/$clip")
 
     /** Delete the phone's copy of run [n]'s clip (the camera keeps its own). */
-    fun deleteClipCopy(n: Int) {
-        val s = session ?: return
+    fun deleteClipCopy(n: Int, inSession: Session? = session) {
+        val s = inSession ?: return
         val clip = s.laps.firstOrNull { it.n == n }?.clip ?: return
         if (clip in downloads) { activity = "Run $n's clip is still downloading"; return }
         val f = clipFile(s, clip)

@@ -149,7 +149,7 @@ fun RunViewerScreen(modifier: Modifier) {
         // The player sits above the list (and fills the screen in fullscreen) — always in this slot, so
         // switching runs or going fullscreen keeps the same video view.
         if (lap != null && file != null) RunPlayer(
-            lap, file, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
+            lap, file.name, file, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
             onFullscreen = { fullscreen = !fullscreen }, onSettings = { settingsOpen = true },
             onPrev = prevRun?.let { { selected = it } }, onNext = nextRun?.let { { selected = it } },
         )
@@ -181,21 +181,132 @@ fun RunViewerScreen(modifier: Modifier) {
         }
     }
 
-    if (settingsOpen) {
-        @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { settingsOpen = false }) {
-            Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 32.dp)) {
-                Text("Video settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
-                OverlayControls(layoutFiles.map { it.name }, layoutName, showOverlay, layoutResult?.exceptionOrNull()?.message,
-                    onShow = { showOverlay = it; layouts.showOverlay = it },
-                    onLayout = { layoutName = it; layouts.selected = it },
-                    folder = layouts.dir.path)
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                PadSetting("Pad start", "before the start line", padStart) { padStart = it; layouts.padStartS = it }
-                PadSetting("Pad end", "after the finish line", padEnd) { padEnd = it; layouts.padEndS = it }
+    if (settingsOpen) ViewerSettingsSheet(layouts, layoutFiles.map { it.name }, layoutName, showOverlay, layoutResult?.exceptionOrNull()?.message,
+        padStart, padEnd, onShow = { showOverlay = it; layouts.showOverlay = it }, onLayout = { layoutName = it; layouts.selected = it },
+        onPadStart = { padStart = it; layouts.padStartS = it }, onPadEnd = { padEnd = it; layouts.padEndS = it }) { settingsOpen = false }
+}
+
+/** The player's settings sheet: overlay on/off + layout, and the pad start / end around the lap. */
+@Composable
+private fun ViewerSettingsSheet(layouts: LayoutStore, names: List<String>, layoutName: String?, showOverlay: Boolean, error: String?,
+                                padStart: Int, padEnd: Int, onShow: (Boolean) -> Unit, onLayout: (String) -> Unit,
+                                onPadStart: (Int) -> Unit, onPadEnd: (Int) -> Unit, onDismiss: () -> Unit) {
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 32.dp)) {
+            Text("Video settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+            OverlayControls(names, layoutName, showOverlay, error, onShow = onShow, onLayout = onLayout, folder = layouts.dir.path)
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            PadSetting("Pad start", "before the start line", padStart, onPadStart)
+            PadSetting("Pad end", "after the finish line", padEnd, onPadEnd)
+        }
+    }
+}
+
+/**
+ * Downloaded runs, from every session: the same player, overlay, settings, export (long press) and
+ * delete-from-phone (swipe left) as View runs, but from the phone's copies — no camera needed.
+ */
+@Composable
+fun BrowseDownloadsScreen(modifier: Modifier) {
+    val context = LocalContext.current
+    val ctl = remember { SessionController.get(context) }
+    // (session, run) for every run whose clip is on the phone, newest session first.
+    var reload by remember { mutableStateOf(0) }
+    val entries by produceState(emptyList<Pair<Session, Lap>>(), reload, ctl.downloadsDone) {
+        value = withContext(Dispatchers.IO) {
+            ctl.store.list().sortedByDescending { it.createdMs }.flatMap { s ->
+                s.laps.filter { it.clip != null && ctl.clipFile(s, it.clip).isFile }.sortedByDescending { it.n }.map { s to it }
             }
         }
     }
+    var selected by remember { mutableStateOf<String?>(null) }
+    fun key(s: Session, l: Lap) = "${s.id}/${l.n}"
+    val cur = entries.firstOrNull { (s, l) -> key(s, l) == selected }
+    val idx = entries.indexOfFirst { (s, l) -> key(s, l) == selected }
+
+    val layouts = remember { LayoutStore(context) }
+    val layoutFiles = remember { layouts.list() }
+    var layoutName by remember { mutableStateOf(layouts.selected?.takeIf { n -> layoutFiles.any { it.name == n } } ?: layoutFiles.firstOrNull()?.name) }
+    var showOverlay by remember { mutableStateOf(layouts.showOverlay) }
+    var padStart by remember { mutableStateOf(layouts.padStartS) }
+    var padEnd by remember { mutableStateOf(layouts.padEndS) }
+    val layoutResult = remember(layoutName) { layoutFiles.firstOrNull { it.name == layoutName }?.let(layouts::load) }
+    val layout = layoutResult?.getOrNull()
+
+    var fullscreen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var exportAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
+    var deleteAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
+    exportAsk?.let { (s, l) -> ExportDialog(l, null, s, ctl, layout, showOverlay, padStart, padEnd) { exportAsk = null } }
+    deleteAsk?.let { (s, l) ->
+        val mb = ctl.clipFile(s, l.clip!!).length() / 1_000_000
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deleteAsk = null },
+            title = { Text("Delete ${s.event} run ${l.n}'s clip from the phone?") },
+            text = { Text("Removes the downloaded copy ($mb MB). If it's still on the camera it can be downloaded again from View runs.") },
+            confirmButton = { TextButton(onClick = {
+                if (selected == key(s, l)) selected = null
+                ctl.deleteClipCopy(l.n, s); deleteAsk = null; reload++
+            }) { Text("Delete", color = Color(0xFFE53935)) } },
+            dismissButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } },
+        )
+    }
+    if (cur == null && fullscreen) fullscreen = false
+    FullscreenEffect(fullscreen)
+    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
+
+    Column(modifier) {
+        if (cur != null) {
+            val (s, l) = cur
+            // Previous / next = the neighbouring entries in the list (older is further down).
+            RunPlayer(l, l.clip!!, null, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
+                onFullscreen = { fullscreen = !fullscreen }, onSettings = { settingsOpen = true },
+                onPrev = entries.getOrNull(idx + 1)?.let { (ps, pl) -> { selected = key(ps, pl) } },
+                onNext = entries.getOrNull(idx - 1)?.let { (ns, nl) -> { selected = key(ns, nl) } })
+        }
+        if (!fullscreen) LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Spacer(Modifier.height(4.dp)) }
+            if (entries.isEmpty()) item {
+                Text("No downloaded runs yet. In a session's View runs, swipe a run right to download its clip.",
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+            items(entries, key = { (s, l) -> key(s, l) }) { (s, l) ->
+                RunRow(l, best = l.lapTimeMs != null && l.lapTimeMs == s.bestLapMs, selected = key(s, l) == selected,
+                    thumb = rememberLocalThumbnail(ctl.clipFile(s, l.clip!!), File(ctl.store.dir(s.id), "video/thumbs")),
+                    onPhone = true, progress = null, title = "${s.event}, Run ${l.n}", allowDownload = false,
+                    onClick = { selected = key(s, l) }, onDownload = {}, onDelete = { deleteAsk = s to l },
+                    onLongPress = { exportAsk = s to l })
+            }
+            if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
+            item { Spacer(Modifier.height(8.dp)) }
+        }
+    }
+    if (settingsOpen) ViewerSettingsSheet(layouts, layoutFiles.map { it.name }, layoutName, showOverlay, layoutResult?.exceptionOrNull()?.message,
+        padStart, padEnd, onShow = { showOverlay = it; layouts.showOverlay = it }, onLayout = { layoutName = it; layouts.selected = it },
+        onPadStart = { padStart = it; layouts.padStartS = it }, onPadEnd = { padEnd = it; layouts.padEndS = it }) { settingsOpen = false }
+}
+
+/** A downloaded clip's thumbnail: the cached one (from View runs), else its first frame, cached. */
+@Composable
+private fun rememberLocalThumbnail(clip: File, dir: File): androidx.compose.ui.graphics.ImageBitmap? {
+    val cached = File(dir, clip.name.substringBeforeLast('.') + ".jpg")
+    val bmp by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, clip.path) {
+        value = withContext(THUMB_IO) {
+            cached.takeIf { it.isFile }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap()
+                ?: runCatching {
+                    val r = android.media.MediaMetadataRetriever()
+                    try {
+                        r.setDataSource(clip.path)
+                        r.getScaledFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, 270)
+                    } finally { r.release() }
+                }.getOrNull()?.let { frame ->
+                    runCatching { dir.mkdirs(); cached.outputStream().use { frame.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) } }
+                    frame.asImageBitmap()
+                }
+        }
+    }
+    return bmp
 }
 
 /**
@@ -206,7 +317,7 @@ fun RunViewerScreen(modifier: Modifier) {
 @Composable
 private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?,
                    onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit, onDelete: () -> Unit,
-                   onLongPress: () -> Unit) {
+                   onLongPress: () -> Unit, title: String = "Run ${r.n}", allowDownload: Boolean = true) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val offset = remember { androidx.compose.animation.core.Animatable(0f) }
     val maxPx = with(androidx.compose.ui.platform.LocalDensity.current) { 110.dp.toPx() }
@@ -234,7 +345,7 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
                     onDragCancel = { scope.launch { offset.animateTo(0f) } },
                 ) { change, dx ->
                     change.consume()
-                    scope.launch { offset.snapTo((offset.value + dx).coerceIn(if (onPhone && progress == null) -maxPx else 0f, maxPx)) }
+                    scope.launch { offset.snapTo((offset.value + dx).coerceIn(if (onPhone && progress == null) -maxPx else 0f, if (allowDownload) maxPx else 0f)) }
                 }
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
@@ -249,7 +360,9 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
                 DownloadBadge(onPhone, progress, Modifier.align(Alignment.BottomEnd).padding(4.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text("Run ${r.n}" + if (best) " (best)" else "", style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                // Long titles (event, run #) wrap to a second line in a smaller size rather than being cut.
+                Text(title + if (best) " (best)" else "", maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    style = if (title.length > 10) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
                 Text(r.clip!!.substringBeforeLast('.'), style = MaterialTheme.typography.bodySmall, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 r.clipDurationS?.let { Text("%d:%02d".format(it / 60, it % 60), style = MaterialTheme.typography.bodySmall) }
@@ -266,12 +379,12 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
  * camera's file over its WiFi (only the trimmed part).
  */
 @Composable
-private fun ExportDialog(lap: Lap, file: CameraFile, s: Session, ctl: SessionController, layout: OverlayLayout?, overlayDefault: Boolean,
+private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: SessionController, layout: OverlayLayout?, overlayDefault: Boolean,
                          padStartS: Int, padEndS: Int, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val exporter = remember { com.lunk333.whrrah.export.ClipExporter.get(context) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val local = remember(file.name) { ctl.clipFile(s, file.name).takeIf { it.isFile } }
+    val local = remember(lap.clip) { lap.clip?.let { ctl.clipFile(s, it) }?.takeIf { it.isFile } }
     val videoStartMs = lap.videoStartMs ?: lap.clipOffsetMs?.let { lap.recStartWallMs + it }
     val canPad = videoStartMs != null && lap.startCrossMs != null && lap.finishCrossMs != null
     var withOverlay by remember { mutableStateOf(overlayDefault && layout != null && videoStartMs != null) }
@@ -314,7 +427,7 @@ private fun ExportDialog(lap: Lap, file: CameraFile, s: Session, ctl: SessionCon
         },
         confirmButton = {
             when {
-                !started -> TextButton(onClick = {
+                !started -> TextButton(enabled = local != null || remote != null, onClick = {
                     started = true
                     scope.launch {
                         val o = if (withOverlay && layout != null && videoStartMs != null) {
@@ -329,7 +442,7 @@ private fun ExportDialog(lap: Lap, file: CameraFile, s: Session, ctl: SessionCon
                         val start = if (padded && canPad) (lap.startCrossMs!! - padStartS * 1000L - videoStartMs!!).coerceAtLeast(0) else null
                         val end = if (padded && canPad) (lap.finishCrossMs!! + padEndS * 1000L - videoStartMs!!).coerceAtLeast((start ?: 0) + 1000) else null
                         val src = local?.let { Uri.fromFile(it) }
-                            ?: Uri.parse("http://${OsmoLink.IP}" + dev.konraditurbe.osmosis.camera.PathAddressing.original(file))
+                            ?: Uri.parse("http://${OsmoLink.IP}" + dev.konraditurbe.osmosis.camera.PathAddressing.original(remote!!))
                         val safe = s.event.replace(Regex("[^A-Za-z0-9_-]+"), "_").trim('_')
                         val lapPart = lap.lapTimeMs?.let { "_%d-%02d-%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: ""
                         val name = "WHRRAH_${safe}_run${lap.n}$lapPart" + (if (o != null) "_overlay" else "") + "_${System.currentTimeMillis() / 1000}.mp4"
@@ -424,27 +537,27 @@ private fun FullscreenEffect(on: Boolean) {
  */
 @Composable
 private fun RunPlayer(
-    lap: Lap, file: CameraFile, s: Session, ctl: SessionController, layout: OverlayLayout?, fullscreen: Boolean,
+    lap: Lap, clip: String, remote: CameraFile?, s: Session, ctl: SessionController, layout: OverlayLayout?, fullscreen: Boolean,
     padStartS: Int, padEndS: Int, onFullscreen: () -> Unit, onSettings: () -> Unit, onPrev: (() -> Unit)?, onNext: (() -> Unit)?,
 ) {
     // The phone's copy first when the clip has been downloaded (full res, no WiFi needed), then the
     // camera's proxy, then its full-res file.
-    val local = remember(file.path) { ctl.clipFile(s, file.name).takeIf { it.isFile } }
-    val candidates = remember(file.path) {
-        listOfNotNull(local?.let { Uri.fromFile(it).toString() }) + file.previewCandidates().map { "http://${OsmoLink.IP}$it" }
+    val local = remember(clip) { ctl.clipFile(s, clip).takeIf { it.isFile } }
+    val candidates = remember(clip) {
+        listOfNotNull(local?.let { Uri.fromFile(it).toString() }) + (remote?.previewCandidates() ?: emptyList()).map { "http://${OsmoLink.IP}$it" }
     }
-    var idx by remember(file.path) { mutableStateOf(0) }
-    var status by remember(file.path) { mutableStateOf("Loading ${if (candidates.size > 1) "preview" else "clip"}…") }
-    var posMs by remember(file.path) { mutableStateOf(0) }
-    var durMs by remember(file.path) { mutableStateOf(0) }
-    var playing by remember(file.path) { mutableStateOf(false) }
+    var idx by remember(clip) { mutableStateOf(0) }
+    var status by remember(clip) { mutableStateOf("Loading ${if (candidates.size > 1) "preview" else "clip"}…") }
+    var posMs by remember(clip) { mutableStateOf(0) }
+    var durMs by remember(clip) { mutableStateOf(0) }
+    var playing by remember(clip) { mutableStateOf(false) }
     var view by remember { mutableStateOf<VideoView?>(null) }
     // Video frame size (the proxy is smaller but the same shape); until it's known, assume the layout's.
-    var videoW by remember(file.path) { mutableStateOf(0) }
-    var videoH by remember(file.path) { mutableStateOf(0) }
+    var videoW by remember(clip) { mutableStateOf(0) }
+    var videoH by remember(clip) { mutableStateOf(0) }
     var controls by remember { mutableStateOf(true) }
     var poke by remember { mutableStateOf(0) }          // bumped by any control use: restarts the fade timer
-    var scrubMs by remember(file.path) { mutableStateOf<Float?>(null) }
+    var scrubMs by remember(clip) { mutableStateOf<Float?>(null) }
     val renderer = remember { OverlayRenderer() }
     val data by produceState<RunData?>(null, lap.n, s.id) {
         value = withContext(Dispatchers.IO) {
@@ -475,7 +588,7 @@ private fun RunPlayer(
     val latestWin by androidx.compose.runtime.rememberUpdatedState(winStart to winEnd)
     val windowFor by androidx.compose.runtime.rememberUpdatedState(::window)
 
-    LaunchedEffect(file.path) {
+    LaunchedEffect(clip) {
         while (true) {
             view?.let {
                 if (it.isPlaying || posMs != it.currentPosition) posMs = it.currentPosition
@@ -604,7 +717,7 @@ private fun RunPlayer(
         }
         }
         if (!fullscreen) Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Run ${lap.n} · ${file.name}" + (when {
+            Text("Run ${lap.n} · ${clip}" + (when {
                     local != null && idx == 0 -> " · from the phone"
                     idx == (if (local != null) 1 else 0) && candidates.size > (if (local != null) 2 else 1) -> " · low-res preview"
                     else -> " · full res" }) +

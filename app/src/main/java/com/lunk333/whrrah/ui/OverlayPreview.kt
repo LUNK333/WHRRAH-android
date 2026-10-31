@@ -104,5 +104,20 @@ fun OverlayPreviewScreen(modifier: Modifier) {
                 t - ts.first(), d.lapNumberAt(t), d.valueAt(RunData.SPEED, t), d.valueAt(RunData.LON_ACC, t), d.valueAt(RunData.LAT_ACC, t)),
             style = MaterialTheme.typography.bodySmall)
         Text("Layouts folder: ${layouts.dir.path}", style = MaterialTheme.typography.bodySmall)
+        // Export check without the camera: renders files/export_test.mp4 (any clip copied there) with this
+        // layout and run, as if the video started 5 s before the run's start line.
+        val testClip = remember { File(context.getExternalFilesDir(null), "export_test.mp4") }
+        val exporter = remember { com.lunk333.whrrah.export.ClipExporter.get(context) }
+        androidx.compose.runtime.LaunchedEffect(exporter.running) { while (exporter.running) { exporter.pollProgress(); kotlinx.coroutines.delay(250) } }
+        if (testClip.isFile) {
+            OutlinedButton(enabled = !exporter.running && d != null, onClick = {
+                val lap = run!!.second
+                val vs = (lap.startCrossMs ?: ((d!!.timestamps.first() * 1000).toLong() + 5000)) - 5000
+                exporter.start(android.net.Uri.fromFile(testClip), "WHRRAH_export_test_${System.currentTimeMillis() / 1000}.mp4", 2000, 22000,
+                    com.lunk333.whrrah.export.ClipExporter.Overlay(layout, d, vs))
+            }) { Text("Test export (export_test.mp4, 2–22 s, with overlay)") }
+            if (exporter.status.isNotEmpty()) Text(exporter.status + (exporter.progress?.let { " · %d%%".format((it * 100).toInt()) } ?: ""),
+                style = MaterialTheme.typography.bodySmall)
+        }
     }
 }

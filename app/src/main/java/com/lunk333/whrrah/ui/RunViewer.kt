@@ -36,6 +36,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.combinedClickable
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -118,6 +119,14 @@ fun RunViewerScreen(modifier: Modifier) {
     val layout = layoutResult?.getOrNull()
 
     var fullscreen by remember { mutableStateOf(false) }
+    // Long-press a run → render / export it to the gallery.
+    var exportAsk by remember { mutableStateOf<Int?>(null) }
+    exportAsk?.let { n ->
+        val r = s.laps.firstOrNull { it.n == n }
+        val f = r?.clip?.let { c -> link.files.firstOrNull { it.name == c } }
+        if (r == null || f == null) exportAsk = null
+        else ExportDialog(r, f, s, ctl, if (layout != null) layout else null, showOverlay, padStart, padEnd) { exportAsk = null }
+    }
     // Swipe a downloaded run left → confirm → delete the phone's copy.
     var deleteAsk by remember { mutableStateOf<Int?>(null) }
     deleteAsk?.let { n ->
@@ -164,7 +173,8 @@ fun RunViewerScreen(modifier: Modifier) {
                 RunRow(r, best = r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs, selected = r.n == selected,
                     thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
                     onPhone = onPhone, progress = ctl.downloads[r.clip],
-                    onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) }, onDelete = { deleteAsk = r.n })
+                    onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) }, onDelete = { deleteAsk = r.n },
+                    onLongPress = { exportAsk = r.n })
             }
             if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
             item { Spacer(Modifier.height(8.dp)) }
@@ -192,9 +202,11 @@ fun RunViewerScreen(modifier: Modifier) {
  * One run: thumbnail · "Run N (best)" with the clip name and length · lap time. Swipe it right to
  * download the clip; a badge on the thumbnail shows it's on the phone (or the download's progress).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?,
-                   onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit, onDelete: () -> Unit) {
+                   onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit, onDelete: () -> Unit,
+                   onLongPress: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val offset = remember { androidx.compose.animation.core.Animatable(0f) }
     val maxPx = with(androidx.compose.ui.platform.LocalDensity.current) { 110.dp.toPx() }
@@ -225,7 +237,7 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
                     scope.launch { offset.snapTo((offset.value + dx).coerceIn(if (onPhone && progress == null) -maxPx else 0f, maxPx)) }
                 }
             }
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
         colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
     ) {
         Row(Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -246,6 +258,90 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
         }
     }
     }
+}
+
+/**
+ * Render a run's clip into the gallery: with the overlay (cropped to the layout's export frame) and/or
+ * trimmed to the padded window around the lap. Uses the phone's copy when there is one, else reads the
+ * camera's file over its WiFi (only the trimmed part).
+ */
+@Composable
+private fun ExportDialog(lap: Lap, file: CameraFile, s: Session, ctl: SessionController, layout: OverlayLayout?, overlayDefault: Boolean,
+                         padStartS: Int, padEndS: Int, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val exporter = remember { com.lunk333.whrrah.export.ClipExporter.get(context) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val local = remember(file.name) { ctl.clipFile(s, file.name).takeIf { it.isFile } }
+    val videoStartMs = lap.videoStartMs ?: lap.clipOffsetMs?.let { lap.recStartWallMs + it }
+    val canPad = videoStartMs != null && lap.startCrossMs != null && lap.finishCrossMs != null
+    var withOverlay by remember { mutableStateOf(overlayDefault && layout != null && videoStartMs != null) }
+    var padded by remember { mutableStateOf(canPad) }
+    var started by remember { mutableStateOf(false) }
+    LaunchedEffect(exporter.running) { while (exporter.running) { exporter.pollProgress(); delay(250) } }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!exporter.running) onDismiss() },
+        title = { Text("Export run ${lap.n}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!started) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(withOverlay, { withOverlay = it }, enabled = layout != null && videoStartMs != null)
+                        Text("With overlay" + when {
+                            layout == null -> " (no layout)"
+                            videoStartMs == null -> " (run not matched to its clip)"
+                            else -> " — ${layout.aspectRatio} crop"
+                        })
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(padded, { padded = it }, enabled = canPad)
+                        Text(if (canPad) "Padded: $padStartS s before the start to $padEndS s after the finish" else "Padded (needs line crossings + clip timing)")
+                    }
+                    Text(if (local != null) "From the phone's copy." else "Reads the clip off the camera over WiFi — stay on this screen.",
+                        style = MaterialTheme.typography.bodySmall)
+                    if (lap.videoStartMs == null && videoStartMs != null && withOverlay)
+                        Text("Not gyro-synced: the overlay timing is approximate.", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text(exporter.status)
+                    if (exporter.running) {
+                        val p = exporter.progress
+                        if (p != null) androidx.compose.material3.LinearProgressIndicator(progress = { p }, Modifier.fillMaxWidth())
+                        else LinearProgressIndicator(Modifier.fillMaxWidth())
+                        p?.let { Text("%d%%".format((it * 100).toInt()), style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                !started -> TextButton(onClick = {
+                    started = true
+                    scope.launch {
+                        val o = if (withOverlay && layout != null && videoStartMs != null) {
+                            val data = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
+                                        lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.lapTimeMs })
+                                }.getOrNull()
+                            }
+                            com.lunk333.whrrah.export.ClipExporter.Overlay(layout, data, videoStartMs)
+                        } else null
+                        val start = if (padded && canPad) (lap.startCrossMs!! - padStartS * 1000L - videoStartMs!!).coerceAtLeast(0) else null
+                        val end = if (padded && canPad) (lap.finishCrossMs!! + padEndS * 1000L - videoStartMs!!).coerceAtLeast((start ?: 0) + 1000) else null
+                        val src = local?.let { Uri.fromFile(it) }
+                            ?: Uri.parse("http://${OsmoLink.IP}" + dev.konraditurbe.osmosis.camera.PathAddressing.original(file))
+                        val safe = s.event.replace(Regex("[^A-Za-z0-9_-]+"), "_").trim('_')
+                        val lapPart = lap.lapTimeMs?.let { "_%d-%02d-%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: ""
+                        val name = "WHRRAH_${safe}_run${lap.n}$lapPart" + (if (o != null) "_overlay" else "") + "_${System.currentTimeMillis() / 1000}.mp4"
+                        exporter.start(src, name, start, end, o)
+                    }
+                }) { Text("Export") }
+                exporter.running -> TextButton(onClick = { exporter.cancel() }) { Text("Cancel") }
+                else -> TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
+        dismissButton = { if (!started) TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** On the thumbnail: a green tick when the clip is on the phone, a progress ring while downloading. */

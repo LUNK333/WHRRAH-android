@@ -731,19 +731,24 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
     Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.weight(4.5f).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // Delta bar across the full width: each chevron cell is 1/20 of what the number leaves.
-                val barH = (maxWidth.value * (1 - DELTA_NUMBER_FRAC) / (2 * DELTA_CHEVRONS) * 1.9f).coerceAtMost(maxHeight.value * 0.3f)
+                // On course the delta bar (top) and the time share the height about evenly; otherwise
+                // (finished, or between runs) the time gets most of it and the bar shrinks.
+                val onCourse = ctl.currentRun != null && ctl.liveLapMs == null
+                val avail = maxHeight.value - 90f
+                val smallBar = (maxWidth.value * (1 - DELTA_NUMBER_FRAC) / (2 * DELTA_CHEVRONS) * 1.4f).coerceAtMost(avail * 0.2f)
+                val barH by androidx.compose.animation.core.animateFloatAsState(if (onCourse) avail * 0.5f else smallBar, label = "deltaBar")
                 // "0:00.000" with tabular digits is ~5 em wide; also leave room for the text lines and the bar.
-                val byWidth = maxWidth.value / 5.2f
-                val byHeight = (maxHeight.value - 90f - barH - 8f) / 1.25f
+                val panelW = maxWidth.value
+                val byWidth = panelW / 5.2f
+                val byHeight = (avail - barH - 8f) / 1.25f
                 val size = minOf(byWidth, byHeight).coerceAtLeast(24f)
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                     Text("Lap Time", style = MaterialTheme.typography.titleMedium)
+                    DeltaChevrons(ctl.liveDelta, barH, panelW)
                     Text(fmtTimer(ms), color = color, maxLines = 1, softWrap = false,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum",
                             fontSize = size.sp, lineHeight = (size * 1.1f).sp))
-                    DeltaChevrons(ctl.liveDelta, barH)
                     val big = MaterialTheme.typography.titleMedium.let { it.copy(fontSize = it.fontSize * 1.5f) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(caption, style = big)
@@ -777,7 +782,7 @@ private const val HEADER_SHOW_MS = 5000L
  * with no reference yet.
  */
 @Composable
-private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: Float) {
+private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: Float, widthDp: Float) {
     val d = st?.delta
     val ticks = if (d == null) 0 else minOf(DELTA_CHEVRONS, (kotlin.math.abs(d) / DELTA_TICK_S + 1e-9).toInt())
     val held = st != null && !st.onTrack
@@ -799,7 +804,9 @@ private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: 
             color = numColor, maxLines = 1, softWrap = false, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.weight(2 * DELTA_NUMBER_FRAC / (1 - DELTA_NUMBER_FRAC)),   // halves weigh 1 each
             style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum",
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = (heightDp * 0.55f).sp))
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                // As tall as the bar allows, but "+0.00" has to fit its share of the width.
+                fontSize = minOf(heightDp * 0.55f, widthDp * DELTA_NUMBER_FRAC / 3.4f).sp))
         // Right half: index 0 is next to the centre; ahead lights from the centre out.
         ChevronHalf(pointLeft = false, Modifier.weight(1f).fillMaxHeight()) { i ->
             if (d != null && d < 0 && i < ticks) green else dim
@@ -814,7 +821,7 @@ private fun ChevronHalf(pointLeft: Boolean, modifier: Modifier, color: (Int) -> 
     androidx.compose.foundation.Canvas(modifier) {
         val cell = size.width / DELTA_CHEVRONS
         val w = cell * 0.62f
-        val h = size.height * 0.8f
+        val h = minOf(size.height * 0.8f, cell * 4f)   // tall but still chevron-shaped
         val stroke = cell * 0.24f
         val cy = size.height / 2
         for (i in 0 until DELTA_CHEVRONS) {

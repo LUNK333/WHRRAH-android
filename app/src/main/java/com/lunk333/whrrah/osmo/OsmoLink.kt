@@ -610,6 +610,15 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     }
 
     /**
+     * The camera's own thumbnail for [f] (a JPEG screennail from the start of the clip, `.scr`; `.thm`
+     * on cameras that name it that way), or null. Blocking: call off the main thread, with the WiFi up.
+     */
+    fun fetchThumbnail(f: CameraFile): ByteArray? {
+        val p = PathAddressing.thumbnail(f)
+        return http.getBytes(p) ?: if (p.endsWith(".scr")) http.getBytes(p.removeSuffix(".scr") + ".thm") else null
+    }
+
+    /**
      * Pull [f]'s whole gyro track into [out] (CSV t_ms,w,x,y,z) for a session lap. Returns false if
      * another fetch is already running (try again later). [onDone] runs on the main thread.
      */

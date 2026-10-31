@@ -37,10 +37,17 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.platform.LocalContext
@@ -99,7 +106,8 @@ fun RunViewerScreen(modifier: Modifier) {
     val layoutResult = remember(layoutName) { layoutFiles.firstOrNull { it.name == layoutName }?.let(layouts::load) }
     val layout = layoutResult?.getOrNull()
 
-    LazyColumn(modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier) {
+    LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Column(Modifier.padding(top = 8.dp)) {
                 Text(s.event, style = MaterialTheme.typography.titleLarge)
@@ -110,12 +118,6 @@ fun RunViewerScreen(modifier: Modifier) {
                 }
             }
         }
-        item {
-            OverlayControls(layoutFiles.map { it.name }, layoutName, showOverlay, layoutResult?.exceptionOrNull()?.message,
-                onShow = { showOverlay = it; layouts.showOverlay = it },
-                onLayout = { layoutName = it; layouts.selected = it },
-                folder = layouts.dir.path)
-        }
         if (lap != null && file != null) item(key = "player-${lap.n}") {
             RunPlayer(lap, file, s, ctl, if (showOverlay) layout else null)
         }
@@ -124,22 +126,70 @@ fun RunViewerScreen(modifier: Modifier) {
                 else "None of this session's runs have a clip on the camera yet.", style = MaterialTheme.typography.bodyMedium)
         }
         items(runs, key = { it.n }) { r ->
-            Card(
-                Modifier.fillMaxWidth().clickable { selected = r.n },
-                colors = if (r.n == selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
-            ) {
-                Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("Run ${r.n}" + if (r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs) "  · best" else "", style = MaterialTheme.typography.titleMedium)
-                        Text(r.clip!!.substringBeforeLast('.') + (r.clipDurationS?.let { " · ${it}s" } ?: "") +
-                            (if (r.videoStartMs != null) " · synced" else ""), style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text(fmtLap(r.lapTimeMs), style = MaterialTheme.typography.titleLarge)
-                }
+            RunRow(r, best = r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs, selected = r.n == selected,
+                thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
+                onClick = { selected = r.n })
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+    // Bottom bar: the overlay switch, centred.
+    HorizontalDivider()
+    OverlayControls(layoutFiles.map { it.name }, layoutName, showOverlay, layoutResult?.exceptionOrNull()?.message,
+        onShow = { showOverlay = it; layouts.showOverlay = it },
+        onLayout = { layoutName = it; layouts.selected = it },
+        folder = layouts.dir.path)
+    }
+}
+
+/** One run: thumbnail · "Run N (best)" with the clip name and length · lap time. */
+@Composable
+private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?, onClick: () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
+    ) {
+        Row(Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(Color.Black),
+                contentAlignment = Alignment.Center) {
+                if (thumb != null) androidx.compose.foundation.Image(thumb, contentDescription = "Run ${r.n}",
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
             }
+            Column(Modifier.weight(1f)) {
+                Text("Run ${r.n}" + if (best) " (best)" else "", style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                Text(r.clip!!.substringBeforeLast('.'), style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                r.clipDurationS?.let { Text("%d:%02d".format(it / 60, it % 60), style = MaterialTheme.typography.bodySmall) }
+            }
+            Text(fmtLap(r.lapTimeMs), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"))
         }
     }
 }
+
+/**
+ * The clip's thumbnail: from the session's cache (`video/thumbs/`), else fetched off the camera once
+ * the WiFi is up and cached. Null until there is one.
+ */
+@Composable
+private fun rememberThumbnail(link: OsmoLink, file: CameraFile?, dir: File): androidx.compose.ui.graphics.ImageBitmap? {
+    val ready = link.phase == OsmoLink.Phase.READY
+    val name = file?.name ?: return null
+    val cached = File(dir, name.substringBeforeLast('.') + ".jpg")
+    val bmp by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, name, ready) {
+        value = withContext(THUMB_IO) {
+            fun decode(b: ByteArray) = android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap()
+            cached.takeIf { it.isFile }?.readBytes()?.let(::decode)
+                ?: if (ready) runCatching { link.fetchThumbnail(file) }.getOrNull()?.let { bytes ->
+                    decode(bytes)?.also { runCatching { dir.mkdirs(); cached.writeBytes(bytes) } }
+                } else null
+        } ?: value
+    }
+    return bmp
+}
+
+/** Two thumbnail fetches at a time — the camera's HTTP server is small. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val THUMB_IO = Dispatchers.IO.limitedParallelism(2)
 
 /** Streams [file] (proxy first) and overlays the run's lap time when the run is synced. */
 @Composable
@@ -259,7 +309,7 @@ private fun fmtLap(ms: Long?): String = ms?.let { "%d:%02d.%03d".format(it / 600
 private fun OverlayControls(names: List<String>, selected: String?, show: Boolean, error: String?,
                             onShow: (Boolean) -> Unit, onLayout: (String) -> Unit, folder: String) {
     var open by remember { mutableStateOf(false) }
-    Column {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = show, onCheckedChange = onShow, enabled = names.isNotEmpty())
             Text("Show overlay", Modifier.clickable(enabled = names.isNotEmpty()) { onShow(!show) })

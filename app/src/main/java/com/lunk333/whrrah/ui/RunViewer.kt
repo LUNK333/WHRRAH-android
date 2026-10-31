@@ -118,6 +118,19 @@ fun RunViewerScreen(modifier: Modifier) {
     val layout = layoutResult?.getOrNull()
 
     var fullscreen by remember { mutableStateOf(false) }
+    // Swipe a downloaded run left → confirm → delete the phone's copy.
+    var deleteAsk by remember { mutableStateOf<Int?>(null) }
+    deleteAsk?.let { n ->
+        val clip = s.laps.firstOrNull { it.n == n }?.clip
+        val mb = clip?.let { ctl.clipFile(s, it).length() / 1_000_000 } ?: 0
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deleteAsk = null },
+            title = { Text("Delete run $n's clip from the phone?") },
+            text = { Text("Removes the downloaded copy ($mb MB). The clip stays on the camera and can be downloaded again.") },
+            confirmButton = { TextButton(onClick = { ctl.deleteClipCopy(n); deleteAsk = null }) { Text("Delete", color = Color(0xFFE53935)) } },
+            dismissButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } },
+        )
+    }
     var settingsOpen by remember { mutableStateOf(false) }
     if (file == null && fullscreen) fullscreen = false
     FullscreenEffect(fullscreen)
@@ -151,7 +164,7 @@ fun RunViewerScreen(modifier: Modifier) {
                 RunRow(r, best = r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs, selected = r.n == selected,
                     thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
                     onPhone = onPhone, progress = ctl.downloads[r.clip],
-                    onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) })
+                    onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) }, onDelete = { deleteAsk = r.n })
             }
             if (ctl.activity.isNotEmpty()) item { Text(ctl.activity, style = MaterialTheme.typography.bodySmall) }
             item { Spacer(Modifier.height(8.dp)) }
@@ -181,28 +194,36 @@ fun RunViewerScreen(modifier: Modifier) {
  */
 @Composable
 private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.compose.ui.graphics.ImageBitmap?,
-                   onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit) {
+                   onPhone: Boolean, progress: Float?, onClick: () -> Unit, onDownload: () -> Unit, onDelete: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val offset = remember { androidx.compose.animation.core.Animatable(0f) }
     val maxPx = with(androidx.compose.ui.platform.LocalDensity.current) { 110.dp.toPx() }
     Box {
-        // Revealed behind the card as it slides right.
-        Row(Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
+        // Revealed behind the card: sliding right, download (or "on the phone"); sliding left (downloaded
+        // clips only), delete the phone's copy.
+        if (offset.value >= 0f) Row(Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
             .background(if (onPhone) Color(0xFF455A64) else Color(0xFF2E7D32)).padding(start = 20.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Text(if (onPhone) "✓ On the phone" else "⬇ Download", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        } else Row(Modifier.matchParentSize().clip(RoundedCornerShape(12.dp)).background(Color(0xFFC62828)).padding(end = 20.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+            Text("Delete from phone", color = Color.White, style = MaterialTheme.typography.titleMedium)
         }
     Card(
         Modifier.fillMaxWidth()
             .offset { androidx.compose.ui.unit.IntOffset(offset.value.toInt(), 0) }
-            .pointerInput(r.n) {
+            .pointerInput(r.n, onPhone, progress == null) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         if (offset.value > maxPx * 0.7f) onDownload()
+                        else if (offset.value < -maxPx * 0.7f) onDelete()
                         scope.launch { offset.animateTo(0f) }
                     },
                     onDragCancel = { scope.launch { offset.animateTo(0f) } },
-                ) { change, dx -> change.consume(); scope.launch { offset.snapTo((offset.value + dx).coerceIn(0f, maxPx)) } }
+                ) { change, dx ->
+                    change.consume()
+                    scope.launch { offset.snapTo((offset.value + dx).coerceIn(if (onPhone && progress == null) -maxPx else 0f, maxPx)) }
+                }
             }
             .clickable(onClick = onClick),
         colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),

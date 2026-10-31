@@ -49,7 +49,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.withStyle
@@ -722,20 +724,47 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
     var showHeader by remember { mutableStateOf(false) }
     LaunchedEffect(showHeader) { if (showHeader) { kotlinx.coroutines.delay(HEADER_SHOW_MS); showHeader = false } }
     val swipe = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    // Panel states (design notes: "Landscape lap time panel states"):
+    //  1 not recording — wide Start run button (1/3), no delta bar: the last run's time big;
+    //  2 recording, before the start line — narrower button, delta bar shown;
+    //  3 on course — the timer fills the screen, a blinking red dot says it's recording, and a
+    //    sideways swipe brings the Stop button in for a few seconds;
+    //  4 past the finish (still recording) — back to state 1's sizes.
+    val recording = ctl.currentRun != null
+    val state = when {
+        !recording -> 1
+        ctl.liveLapMs != null -> 4
+        ctl.liveStartElapsedMs != null -> 3
+        else -> 2
+    }
+    var stopShown by remember { mutableStateOf(false) }
+    LaunchedEffect(state) { stopShown = false }
+    LaunchedEffect(stopShown) { if (stopShown) { kotlinx.coroutines.delay(STOP_SHOW_MS); stopShown = false } }
+    val showDelta = state == 2 || state == 3
+    val buttonFrac by androidx.compose.animation.core.animateFloatAsState(when {
+        state == 3 && !stopShown -> 0f
+        state == 2 || state == 3 -> 1f / 5.5f
+        else -> 1f / 3
+    }, label = "runButton")
     Box(modifier.pointerInput(Unit) {
         var dy = 0f
         detectVerticalDragGestures(onDragStart = { dy = 0f }, onDragEnd = {
             if (dy < -swipe) showHeader = true else if (dy > swipe) showHeader = false
         }) { _, d -> dy += d }
+    }.pointerInput(state) {
+        // On course: a sideways swipe (either way) brings the Stop button in.
+        var dx = 0f
+        if (state == 3) detectHorizontalDragGestures(onDragStart = { dx = 0f }, onDragEnd = {
+            if (kotlin.math.abs(dx) > swipe) stopShown = true
+        }) { _, d -> dx += d }
     }) {
-    Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(Modifier.weight(4.5f).fillMaxHeight()) {
+    Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(if (buttonFrac > 0.01f) 12.dp else 0.dp)) {
+        Card(Modifier.weight(1f - buttonFrac).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // On course the delta bar (top) gets 2/3 of the height and the time 1/3; otherwise
-                // (finished, or between runs) it flips: the time 2/3, the bar 1/3.
-                val onCourse = ctl.currentRun != null && ctl.liveLapMs == null
+                // With the delta bar (states 2, 3) it takes 2/3 of the height above the time; otherwise
+                // the time has it all.
                 val avail = maxHeight.value - 90f
-                val barH by androidx.compose.animation.core.animateFloatAsState(avail * (if (onCourse) 2f / 3 else 1f / 3), label = "deltaBar")
+                val barH by androidx.compose.animation.core.animateFloatAsState(if (showDelta) avail * 2f / 3 else 0f, label = "deltaBar")
                 // "0:00.000" with tabular digits is ~5 em wide; also leave room for the text lines and the bar.
                 val panelW = maxWidth.value
                 val byWidth = panelW / 5.2f
@@ -743,7 +772,7 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
                 val size = minOf(byWidth, byHeight).coerceAtLeast(24f)
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                     Text("Lap Time", style = MaterialTheme.typography.titleMedium)
-                    DeltaChevrons(ctl.liveDelta, barH, panelW)
+                    if (barH > 1f) DeltaChevrons(ctl.liveDelta, barH, panelW)
                     Text(fmtTimer(ms), color = color, maxLines = 1, softWrap = false,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum",
@@ -756,13 +785,15 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
                 }
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (buttonFrac > 0.01f) Column(Modifier.weight(buttonFrac).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             PermissionCard(onGranted = ctl::startGps)
             if (ctl.camera.problems.isNotEmpty())
                 Text("⚠ Check the camera", color = Color(0xFFC62828), style = MaterialTheme.typography.titleSmall)
             LandscapeRunButton(ctl, Modifier.fillMaxWidth().weight(1f))
         }
     }
+    // Recording indicator while the timer has the whole screen.
+    if (state == 3) RecordingDot(Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp))
     androidx.compose.animation.AnimatedVisibility(
         visible = showHeader, modifier = Modifier.align(Alignment.BottomCenter),
         enter = androidx.compose.animation.slideInVertically { it }, exit = androidx.compose.animation.slideOutVertically { it },
@@ -772,6 +803,16 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
     }
 }
 
+/** A red dot blinking about once a second. */
+@Composable
+private fun RecordingDot(modifier: Modifier) {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "rec")
+    val alpha by t.animateFloat(1f, 0.15f, androidx.compose.animation.core.infiniteRepeatable(
+        androidx.compose.animation.core.tween(600), androidx.compose.animation.core.RepeatMode.Reverse), label = "recAlpha")
+    Box(modifier.size(18.dp).clip(CircleShape).background(Color(0xFFE53935).copy(alpha = alpha)))
+}
+
+private const val STOP_SHOW_MS = 5000L
 private const val HEADER_SHOW_MS = 5000L
 
 /**

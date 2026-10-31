@@ -378,6 +378,7 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
     override fun onLost() { main.post {
         recording = null
         logLine("camera WiFi lost")
+        listGen++   // any listing in flight is on the dropped network: let it go quietly
         session?.close(); session = null
         if (phase != Phase.IDLE) fail("Camera WiFi dropped (camera asleep or out of range) — reconnect")
     } }
@@ -386,20 +387,31 @@ class OsmoLink private constructor(private val context: Context) : GattClient.Li
 
     fun listFiles() = listFiles(1)
 
+    /**
+     * Bumped by every new listing and by a WiFi drop. A listing whose number is no longer current
+     * (the WiFi dropped and came back, and a new listing started) drops its result — otherwise its
+     * late "didn't answer" lands on top of the good list from the new one.
+     */
+    @Volatile private var listGen = 0
+
     private fun listFiles(attempt: Int) {
         setPhase(Phase.LISTING, if (attempt == 1) "Reading the camera's file list…" else "Re-reading the file list (try $attempt)…")
+        val gen = ++listGen
+        fun stale(s: CameraSession): Boolean = (gen != listGen).also { if (it) { s.close(); logLine("dropping an outdated file listing (the WiFi reconnected)") } }
         Thread {
             session?.close()
             // Action 4 = udp/9004 after a tcp/7001 poke; Action 5 Pro = udp/10004, no poke.
             var s = newSession(9004, true)
             var list = runCatching { s.fetchFileList(IP) }.getOrElse { logLine("list error: ${it.message}"); emptyList() }
+            if (stale(s)) return@Thread
             if (!s.handshakeOk) {
                 s.close()
                 logLine("nothing on udp/9004 — trying udp/10004")
                 s = newSession(10004, false)
                 list = runCatching { s.fetchFileList(IP) }.getOrElse { logLine("list error: ${it.message}"); emptyList() }
             }
-            if (!s.handshakeOk) { s.close(); main.post { fail("Camera didn't answer the file-list request") }; return@Thread }
+            if (stale(s)) return@Thread
+            if (!s.handshakeOk) { s.close(); main.post { if (gen == listGen) fail("Camera didn't answer the file-list request") }; return@Thread }
             // Keep the datalink up — it holds the AP and carries the recording status pushes — but
             // leave playback mode, which listing entered: a camera in playback can't record.
             s.holdPlayback = false

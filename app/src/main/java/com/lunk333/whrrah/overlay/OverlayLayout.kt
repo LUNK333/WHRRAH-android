@@ -202,6 +202,14 @@ class LayoutStore(context: Context) {
         get() = prefs.getBoolean("show", true)
         set(v) { prefs.edit().putBoolean("show", v).apply() }
 
+    /** Seconds of video shown before the start line / after the finish line (desktop's Pad Start / Pad End). */
+    var padStartS: Int
+        get() = prefs.getInt("pad_start", 5)
+        set(v) { prefs.edit().putInt("pad_start", v).apply() }
+    var padEndS: Int
+        get() = prefs.getInt("pad_end", 10)
+        set(v) { prefs.edit().putInt("pad_end", v).apply() }
+
     private fun seed() {
         if (prefs.getBoolean("seeded", false) && dir.isDirectory) return
         dir.mkdirs()

@@ -110,6 +110,8 @@ fun RunViewerScreen(modifier: Modifier) {
     val layoutFiles = remember { layouts.list() }
     var layoutName by remember { mutableStateOf(layouts.selected?.takeIf { n -> layoutFiles.any { it.name == n } } ?: layoutFiles.firstOrNull()?.name) }
     var showOverlay by remember { mutableStateOf(layouts.showOverlay) }
+    var padStart by remember { mutableStateOf(layouts.padStartS) }
+    var padEnd by remember { mutableStateOf(layouts.padEndS) }
     val layoutResult = remember(layoutName) { layoutFiles.firstOrNull { it.name == layoutName }?.let(layouts::load) }
     val layout = layoutResult?.getOrNull()
 
@@ -123,7 +125,7 @@ fun RunViewerScreen(modifier: Modifier) {
         // The player sits above the list (and fills the screen in fullscreen) — always in this slot, so
         // switching runs or going fullscreen keeps the same video view.
         if (lap != null && file != null) RunPlayer(
-            lap, file, s, ctl, if (showOverlay) layout else null, fullscreen,
+            lap, file, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
             onFullscreen = { fullscreen = !fullscreen }, onSettings = { settingsOpen = true },
             onPrev = prevRun?.let { { selected = it } }, onNext = nextRun?.let { { selected = it } },
         )
@@ -160,6 +162,9 @@ fun RunViewerScreen(modifier: Modifier) {
                     onShow = { showOverlay = it; layouts.showOverlay = it },
                     onLayout = { layoutName = it; layouts.selected = it },
                     folder = layouts.dir.path)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                PadSetting("Pad start", "before the start line", padStart) { padStart = it; layouts.padStartS = it }
+                PadSetting("Pad end", "after the finish line", padEnd) { padEnd = it; layouts.padEndS = it }
             }
         }
     }
@@ -249,7 +254,7 @@ private fun FullscreenEffect(on: Boolean) {
 @Composable
 private fun RunPlayer(
     lap: Lap, file: CameraFile, s: Session, ctl: SessionController, layout: OverlayLayout?, fullscreen: Boolean,
-    onFullscreen: () -> Unit, onSettings: () -> Unit, onPrev: (() -> Unit)?, onNext: (() -> Unit)?,
+    padStartS: Int, padEndS: Int, onFullscreen: () -> Unit, onSettings: () -> Unit, onPrev: (() -> Unit)?, onNext: (() -> Unit)?,
 ) {
     val candidates = remember(file.path) { file.previewCandidates().map { "http://${OsmoLink.IP}$it" } }
     var idx by remember(file.path) { mutableStateOf(0) }
@@ -280,12 +285,29 @@ private fun RunPlayer(
     val synced = lap.videoStartMs != null && lap.startCrossMs != null && lap.finishCrossMs != null
     fun seekToData(dataMs: Long) { view?.seekTo((dataMs - lap.videoStartMs!!).toInt().coerceAtLeast(0)) }
 
+    // The part of the clip that's shown: pad start before the start line to pad end after the finish
+    // (desktop's Pad Start / Pad End), as far as the clip and the timing allow; else the whole clip.
+    fun window(dur: Int): Pair<Int, Int> {
+        val top = if (dur > 0) dur else Int.MAX_VALUE
+        val a = if (videoStartMs != null && lap.startCrossMs != null)
+            (lap.startCrossMs - padStartS * 1000L - videoStartMs).coerceIn(0L, top.toLong()).toInt() else 0
+        val b = if (videoStartMs != null && lap.finishCrossMs != null)
+            (lap.finishCrossMs + padEndS * 1000L - videoStartMs).coerceIn(a.toLong(), top.toLong()).toInt() else top
+        return a to b
+    }
+    val (winStart, winEnd) = window(durMs)
+    val winLen = if (winEnd == Int.MAX_VALUE) 0 else winEnd - winStart
+    val latestWin by androidx.compose.runtime.rememberUpdatedState(winStart to winEnd)
+    val windowFor by androidx.compose.runtime.rememberUpdatedState(::window)
+
     LaunchedEffect(file.path) {
         while (true) {
             view?.let {
                 if (it.isPlaying || posMs != it.currentPosition) posMs = it.currentPosition
                 if (playing != it.isPlaying) playing = it.isPlaying
                 if (durMs <= 0 && it.duration > 0) durMs = it.duration
+                // Stop at the end of the window.
+                if (it.isPlaying && it.currentPosition >= latestWin.second) { it.pause(); it.seekTo(latestWin.second); controls = true }
             }
             delay(40)
         }
@@ -329,7 +351,11 @@ private fun RunPlayer(
                     if (v.tag != url) {
                         v.tag = url
                         v.setOnPreparedListener { mp ->
-                            mp.isLooping = false; status = ""; videoW = mp.videoWidth; videoH = mp.videoHeight; durMs = mp.duration; v.start()
+                            mp.isLooping = false; status = ""; videoW = mp.videoWidth; videoH = mp.videoHeight; durMs = mp.duration
+                            // Open at the window start (pad start before the start line).
+                            val open = windowFor(mp.duration).first
+                            if (open > 0) { v.seekTo(open); posMs = open }
+                            v.start()
                         }
                         v.setOnCompletionListener { controls = true }
                         v.setOnErrorListener { _, what, extra ->
@@ -375,22 +401,29 @@ private fun RunPlayer(
                     Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(36.dp)) {
                         PlayerButton(PlayerIcon.PREV, 30.dp, enabled = onPrev != null) { onPrev?.invoke(); poke++ }
                         PlayerButton(if (playing) PlayerIcon.PAUSE else PlayerIcon.PLAY, 48.dp) {
-                            view?.let { if (it.isPlaying) it.pause() else it.start() }; poke++
+                            view?.let {
+                                if (it.isPlaying) it.pause()
+                                else {
+                                    // From the end of the window (or outside it), play it again from its start.
+                                    if (it.currentPosition >= winEnd - 100 || it.currentPosition < winStart) it.seekTo(winStart)
+                                    it.start()
+                                }
+                            }; poke++
                         }
                         PlayerButton(PlayerIcon.NEXT, 30.dp, enabled = onNext != null) { onNext?.invoke(); poke++ }
                     }
                     Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 12.dp, end = 4.dp, bottom = 14.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text("${clock(shownMs)} / ${clock(durMs)}", color = Color.White, style = MaterialTheme.typography.bodyMedium,
+                        Text("${clock(shownMs - winStart)} / ${clock(if (winLen > 0) winLen else durMs)}", color = Color.White, style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f))
                         PlayerButton(if (fullscreen) PlayerIcon.EXIT_FULLSCREEN else PlayerIcon.FULLSCREEN, 24.dp) { onFullscreen(); poke++ }
                     }
                 }
             }
             SeekBar(
-                fraction = if (durMs > 0) shownMs.toFloat() / durMs else 0f, expanded = controls,
+                fraction = if (winLen > 0) (shownMs - winStart).toFloat() / winLen else 0f, expanded = controls,
                 modifier = Modifier.align(Alignment.BottomCenter),
-                onScrub = { f -> scrubMs = f * durMs; poke++ },
+                onScrub = { f -> scrubMs = winStart + f * winLen; poke++ },
                 onScrubEnd = { scrubMs?.let { view?.seekTo(it.toInt()); posMs = it.toInt() }; scrubMs = null },
             )
         }
@@ -406,6 +439,21 @@ private fun RunPlayer(
             } else Text("Not synced to the data yet — the lap overlay and jumps need a sync (RaceBox + clip gyro).",
                 style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+/** A whole-seconds setting with − / + (0–120 s, as desktop). */
+@Composable
+private fun PadSetting(label: String, hint: String, value: Int, onChange: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(hint, style = MaterialTheme.typography.bodySmall)
+        }
+        OutlinedButton(onClick = { onChange((value - 1).coerceIn(0, 120)) }, enabled = value > 0) { Text("−") }
+        Text("$value s", style = MaterialTheme.typography.titleMedium, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.width(64.dp))
+        OutlinedButton(onClick = { onChange((value + 1).coerceIn(0, 120)) }, enabled = value < 120) { Text("+") }
     }
 }
 

@@ -793,7 +793,8 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
         }
     }
     // Recording indicator while the timer has the whole screen.
-    if (state == 3) RecordingDot(Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp))
+    // In line with the run / best captions, between them.
+    if (state == 3) RecordingDot(Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp))
     androidx.compose.animation.AnimatedVisibility(
         visible = showHeader, modifier = Modifier.align(Alignment.BottomCenter),
         enter = androidx.compose.animation.slideInVertically { it }, exit = androidx.compose.animation.slideOutVertically { it },

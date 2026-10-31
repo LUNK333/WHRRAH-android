@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
         // window is visible, so the phone sleeps normally once you switch away.
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         handleIncomingIntent(intent)
+        val coldStart = savedInstanceState == null
         setContent {
             WHRRAHTheme {
                 Scaffold { innerPadding ->
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
                         legacyData = { m -> TelemetryScreen(modifier = m, incomingXrkUri = sharedXrkUri) },
                     )
                 }
+                com.lunk333.whrrah.ui.LaunchSplash(coldStart)
             }
         }
     }

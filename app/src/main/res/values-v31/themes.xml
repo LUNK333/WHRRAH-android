@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Launch screen (Android 12+): the logo on the app's dark background; the in-app splash
+         (ui/Splash.kt) carries on from it with the title below. -->
+    <style name="Theme.WHRRAH" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#1B1B1B</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

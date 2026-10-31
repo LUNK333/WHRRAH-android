@@ -122,7 +122,7 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
 }
 
 private fun title(s: Screen) = when (s) {
-    Screen.HOME -> "WHRRAH"
+    Screen.HOME -> APP_TITLE
     Screen.NEW_SESSION -> "New session"
     Screen.OPEN_SESSION -> "Open session"
     Screen.SESSION -> "Session"

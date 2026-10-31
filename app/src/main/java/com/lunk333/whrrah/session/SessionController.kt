@@ -36,7 +36,7 @@ import java.util.Locale
  * RaceBox is in. One instance per process; all state on the main thread.
  */
 class SessionController private constructor(context: Context) {
-    private val app = context.applicationContext
+    val app: android.content.Context = context.applicationContext
     val store = SessionStore(File(app.getExternalFilesDir(null), "sessions"))
     private val link = OsmoLink.get(app)
     /** The camera over Bluetooth during the session (recording start/stop); WiFi only for Match clips. */

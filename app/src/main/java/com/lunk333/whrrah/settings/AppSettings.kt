@@ -19,6 +19,12 @@ class AppSettings private constructor(context: Context) {
     var autoFetchGyro by mutableStateOf(prefs.getBoolean("auto_fetch_gyro", true)); private set
     /** Use the phone's GPS when no RaceBox is connected. */
     var phoneGpsFallback by mutableStateOf(prefs.getBoolean("phone_gps_fallback", true)); private set
+    /** Landscape timer: run the screen at full brightness while it's up. */
+    var forceFullBrightness by mutableStateOf(prefs.getBoolean("force_full_brightness", true)); private set
+    /** Landscape timer: draw the lit delta chevrons in HDR (brighter than SDR white). Dev options. */
+    var hdrChevrons by mutableStateOf(prefs.getBoolean("hdr_chevrons", false)); private set
+    /** HDR brightness multiplier for the chevrons; 0 = the display's current headroom. Dev options. */
+    var hdrManualBoost by mutableStateOf(prefs.getFloat("hdr_manual_boost", 0f)); private set
 
     fun addDriver(name: String) { if (name.isNotBlank() && name.trim() !in drivers) { drivers = drivers + name.trim(); writeList("drivers", drivers) } }
     fun removeDriver(name: String) { drivers = drivers - name; writeList("drivers", drivers) }
@@ -42,6 +48,9 @@ class AppSettings private constructor(context: Context) {
     fun changeAutoConnectCamera(on: Boolean) { autoConnectCamera = on; prefs.edit().putBoolean("auto_connect_camera", on).apply() }
     fun changeAutoFetchGyro(on: Boolean) { autoFetchGyro = on; prefs.edit().putBoolean("auto_fetch_gyro", on).apply() }
     fun changePhoneGpsFallback(on: Boolean) { phoneGpsFallback = on; prefs.edit().putBoolean("phone_gps_fallback", on).apply() }
+    fun changeForceFullBrightness(on: Boolean) { forceFullBrightness = on; prefs.edit().putBoolean("force_full_brightness", on).apply() }
+    fun changeHdrChevrons(on: Boolean) { hdrChevrons = on; prefs.edit().putBoolean("hdr_chevrons", on).apply() }
+    fun changeHdrManualBoost(v: Float) { hdrManualBoost = v; prefs.edit().putFloat("hdr_manual_boost", v).apply() }
 
     // Newline-joined so order is kept (a StringSet isn't ordered).
     private fun readList(k: String) = prefs.getString(k, "")!!.split('\n').filter { it.isNotBlank() }

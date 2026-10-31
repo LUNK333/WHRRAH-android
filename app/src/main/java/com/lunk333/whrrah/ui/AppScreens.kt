@@ -731,12 +731,11 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
     Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.weight(4.5f).fillMaxHeight()) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                // On course the delta bar (top) and the time share the height about evenly; otherwise
-                // (finished, or between runs) the time gets most of it and the bar shrinks.
+                // On course the delta bar (top) gets 2/3 of the height and the time 1/3; otherwise
+                // (finished, or between runs) it flips: the time 2/3, the bar 1/3.
                 val onCourse = ctl.currentRun != null && ctl.liveLapMs == null
                 val avail = maxHeight.value - 90f
-                val smallBar = (maxWidth.value * (1 - DELTA_NUMBER_FRAC) / (2 * DELTA_CHEVRONS) * 1.4f).coerceAtMost(avail * 0.2f)
-                val barH by androidx.compose.animation.core.animateFloatAsState(if (onCourse) avail * 0.5f else smallBar, label = "deltaBar")
+                val barH by androidx.compose.animation.core.animateFloatAsState(avail * (if (onCourse) 2f / 3 else 1f / 3), label = "deltaBar")
                 // "0:00.000" with tabular digits is ~5 em wide; also leave room for the text lines and the bar.
                 val panelW = maxWidth.value
                 val byWidth = panelW / 5.2f

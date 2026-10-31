@@ -134,7 +134,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 | M2 | Video import + ExoPlayer playback (in progress? `video/VideoPlayerScreen.kt` exists) | any | DOING? | |
 | M3 | Canvas + draggable/resizable widgets (started: `canvas/`) | any | DOING? | |
 | M4 | Sync offset control + per-widget offset + layout JSON save/load | any | TODO | |
-| M5 | Export via Media3 Transformer | desk | TODO | |
+| M5 | Export via Media3 Transformer — `export/ClipExporter.kt`: overlay + layout crop + padded trim → Movies/WHRRAH; tested on the Pixel with a 2.7K HEVC clip (Dev → Overlay preview → Test export). Camera-stream source untested | desk | DOING | desk |
 | M6 | `.xrk` wired into real data model (replace JSON-summary spike with bulk per-channel fetch) | any | TODO | |
 
 ## 5. GUI
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 ## Session log
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
+- 2026-10-31 · desk · M5, L6, G · Run viewer: download (swipe right) / delete copy (swipe left) / export (long press, overlay + padded, to the gallery). Landscape timer: panel states, delta bar style (chevrons/boxes), full brightness, HDR chevrons (Dev). Export verified on the phone with a local clip; next: export straight from the camera's WiFi.
 - 2026-10-30 · desk · L6 · Live lap delta per docs/lap-delta-spec.md, adapted to autocross (separate start/finish, open course): reference = fastest gap-free timed run, picked at run start; projection window + 15 m lateral limit + reacquire. Replay of LAPTIMING TEST vs run 4: final deltas match lap differences to <0.3 ms, ~1–5 µs/fix. Landscape panel: 10+10 chevron bar (0.2 s each), red left = behind, green right = ahead, number in the middle. Next: try it in the car.
 - 2026-10-29 · desk · G1, G3, M4 · Widget overlay port: `overlay/` reads/writes desktop layout JSON (round-trips unknown fields), renders all 6 desktop widget types (port of the export drawing code), run data under AiM channel names from the GPS/RaceBox logs. Layouts folder `Android/data/com.lunk333.whrrah/files/layouts/` (bundled `layout_phone.json` seeded). Run viewer: Show overlay checkbox + layout picker, video framed like the desktop export crop. Dev → Overlay preview. Next: check on real clips; no layout editing yet (G4).
 - 2026-10-29 · desk · B1 · Camera clip list after WiFi join: an empty first SD answer (card not ready after a cold wake) now re-asks after ~3 s instead of ~12 s; the re-ask stops once its answer settles. Vendored osmosis patch, see VENDORED.md.

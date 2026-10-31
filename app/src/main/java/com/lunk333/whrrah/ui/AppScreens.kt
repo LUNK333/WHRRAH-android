@@ -579,6 +579,7 @@ private fun SettingsScreen(modifier: Modifier) {
         item { Toggle("Pull each new clip's gyro automatically", settings.autoFetchGyro, settings::changeAutoFetchGyro) }
         item { Toggle("Use phone GPS when no RaceBox is connected", settings.phoneGpsFallback, settings::changePhoneGpsFallback) }
         item { Toggle("Full screen brightness on the landscape timer", settings.forceFullBrightness, settings::changeForceFullBrightness) }
+        item { DeltaStyleSetting(settings) }
         item {
             Text("Camera: " + (link.lastCamera?.name ?: "none — pair one in Dev options → Camera test bench"),
                 style = MaterialTheme.typography.bodyMedium)
@@ -626,6 +627,18 @@ private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () ->
         Button(onClick = onOverlay, modifier = Modifier.fillMaxWidth()) { Text("Overlay preview (layout + a saved run, no video)") }
         Button(onClick = onHdr, modifier = Modifier.fillMaxWidth()) { Text("HDR chevron test (brighter delta bar)") }
         OutlinedButton(onClick = onData, modifier = Modifier.fillMaxWidth()) { Text("CSV / XRK viewer (legacy)") }
+    }
+}
+
+/** Chevrons or boxes for the landscape timer's delta bar. */
+@Composable
+private fun DeltaStyleSetting(settings: AppSettings) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Delta bar style", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        for ((label, boxes) in listOf("‹‹ Chevrons" to false, "▮▮ Boxes" to true)) {
+            if (settings.deltaBoxes == boxes) Button(onClick = {}) { Text(label) }
+            else OutlinedButton(onClick = { settings.changeDeltaBoxes(boxes) }) { Text(label) }
+        }
     }
 }
 
@@ -782,7 +795,7 @@ private fun SessionLandscape(modifier: Modifier, ctl: SessionController, s: Sess
                 val size = minOf(byWidth, byHeight).coerceAtLeast(24f)
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
                     Text("Lap Time", style = MaterialTheme.typography.titleMedium)
-                    if (barH > 1f) DeltaChevrons(ctl.liveDelta, barH, panelW, hdrBoost)
+                    if (barH > 1f) DeltaChevrons(ctl.liveDelta, barH, panelW, hdrBoost, settings.deltaBoxes)
                     Text(fmtTimer(ms), color = color, maxLines = 1, softWrap = false,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                         style = MaterialTheme.typography.displayLarge.copy(fontFeatureSettings = "tnum",
@@ -833,7 +846,7 @@ private const val HEADER_SHOW_MS = 5000L
  * with no reference yet.
  */
 @Composable
-private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: Float, widthDp: Float, hdrBoost: Float = 1f) {
+private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: Float, widthDp: Float, hdrBoost: Float = 1f, boxes: Boolean = false) {
     val d = st?.delta
     val ticks = if (d == null) 0 else minOf(DELTA_CHEVRONS, (kotlin.math.abs(d) / DELTA_TICK_S + 1e-9).toInt())
     val held = st != null && !st.onTrack
@@ -848,7 +861,7 @@ private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: 
     }
     Row(Modifier.fillMaxWidth().height(heightDp.dp), verticalAlignment = Alignment.CenterVertically) {
         // Left half: index 0 is the outermost; behind lights from the centre out.
-        ChevronHalf(pointLeft = true, Modifier.weight(1f).fillMaxHeight(), hdrBoost) { i ->
+        ChevronHalf(pointLeft = true, Modifier.weight(1f).fillMaxHeight(), hdrBoost, boxes) { i ->
             if (d != null && d > 0 && i >= DELTA_CHEVRONS - ticks) red to true else dim to false
         }
         Text(if (d == null) "—" else (if (d < 0) "−" else "+") + "%.2f".format(kotlin.math.abs(d)),
@@ -859,7 +872,7 @@ private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: 
                 // As tall as the bar allows, but "+0.00" has to fit its share of the width.
                 fontSize = minOf(heightDp * 0.55f, widthDp * DELTA_NUMBER_FRAC / 3.4f).sp))
         // Right half: index 0 is next to the centre; ahead lights from the centre out.
-        ChevronHalf(pointLeft = false, Modifier.weight(1f).fillMaxHeight(), hdrBoost) { i ->
+        ChevronHalf(pointLeft = false, Modifier.weight(1f).fillMaxHeight(), hdrBoost, boxes) { i ->
             if (d != null && d < 0 && i < ticks) green to true else dim to false
         }
     }
@@ -868,9 +881,10 @@ private fun DeltaChevrons(st: com.lunk333.whrrah.session.DeltaState?, heightDp: 
 /**
  * [DELTA_CHEVRONS] chevrons filling the space, each coloured by [color] (index left to right → colour,
  * lit). Lit ones are drawn [hdrBoost]× brighter (extended range: shows in an HDR window only).
+ * [boxes]: filled rounded boxes instead of chevrons.
  */
 @Composable
-private fun ChevronHalf(pointLeft: Boolean, modifier: Modifier, hdrBoost: Float = 1f, color: (Int) -> Pair<Color, Boolean>) {
+private fun ChevronHalf(pointLeft: Boolean, modifier: Modifier, hdrBoost: Float = 1f, boxes: Boolean = false, color: (Int) -> Pair<Color, Boolean>) {
     val colors = (0 until DELTA_CHEVRONS).map(color)
     val paint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         style = android.graphics.Paint.Style.STROKE; strokeCap = android.graphics.Paint.Cap.ROUND; strokeJoin = android.graphics.Paint.Join.ROUND
@@ -885,13 +899,22 @@ private fun ChevronHalf(pointLeft: Boolean, modifier: Modifier, hdrBoost: Float 
             val cx = cell * (i + 0.5f)
             val tip = if (pointLeft) cx - w / 2 else cx + w / 2
             val back = if (pointLeft) cx + w / 2 else cx - w / 2
-            val path = android.graphics.Path().apply {
-                moveTo(back, cy - h / 2); lineTo(tip, cy); lineTo(back, cy + h / 2)
-            }
             val (c, lit) = colors[i]
-            paint.strokeWidth = stroke
             paint.setColor(hdrColor(c, if (lit) hdrBoost else 1f))
-            drawContext.canvas.nativeCanvas.drawPath(path, paint)
+            if (boxes) {
+                // A filled box per 0.2 s: most of the cell wide, as tall as a chevron.
+                paint.style = android.graphics.Paint.Style.FILL
+                val bw = cell * 0.72f
+                drawContext.canvas.nativeCanvas.drawRoundRect(cx - bw / 2, cy - h / 2, cx + bw / 2, cy + h / 2,
+                    cell * 0.12f, cell * 0.12f, paint)
+            } else {
+                paint.style = android.graphics.Paint.Style.STROKE
+                paint.strokeWidth = stroke
+                val path = android.graphics.Path().apply {
+                    moveTo(back, cy - h / 2); lineTo(tip, cy); lineTo(back, cy + h / 2)
+                }
+                drawContext.canvas.nativeCanvas.drawPath(path, paint)
+            }
         }
     }
 }
@@ -932,9 +955,9 @@ private fun HdrTestScreen(modifier: Modifier) {
             val w = maxWidth.value
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Normal", style = MaterialTheme.typography.titleSmall)
-                DeltaChevrons(st, 90f, w, 1f)
+                DeltaChevrons(st, 90f, w, 1f, settings.deltaBoxes)
                 Text("HDR", style = MaterialTheme.typography.titleSmall)
-                DeltaChevrons(st, 90f, w, boost)
+                DeltaChevrons(st, 90f, w, boost, settings.deltaBoxes)
             }
         }
         Text("The HDR row only looks brighter while the switch is on. The boost is biggest indoors at a medium " +

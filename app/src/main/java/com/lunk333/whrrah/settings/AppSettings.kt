@@ -21,6 +21,8 @@ class AppSettings private constructor(context: Context) {
     var phoneGpsFallback by mutableStateOf(prefs.getBoolean("phone_gps_fallback", true)); private set
     /** Landscape timer: run the screen at full brightness while it's up. */
     var forceFullBrightness by mutableStateOf(prefs.getBoolean("force_full_brightness", true)); private set
+    /** Landscape timer: the delta indicators are boxes instead of chevrons. */
+    var deltaBoxes by mutableStateOf(prefs.getBoolean("delta_boxes", false)); private set
     /** Landscape timer: draw the lit delta chevrons in HDR (brighter than SDR white). Dev options. */
     var hdrChevrons by mutableStateOf(prefs.getBoolean("hdr_chevrons", false)); private set
     /** HDR brightness multiplier for the chevrons; 0 = the display's current headroom. Dev options. */
@@ -49,6 +51,7 @@ class AppSettings private constructor(context: Context) {
     fun changeAutoFetchGyro(on: Boolean) { autoFetchGyro = on; prefs.edit().putBoolean("auto_fetch_gyro", on).apply() }
     fun changePhoneGpsFallback(on: Boolean) { phoneGpsFallback = on; prefs.edit().putBoolean("phone_gps_fallback", on).apply() }
     fun changeForceFullBrightness(on: Boolean) { forceFullBrightness = on; prefs.edit().putBoolean("force_full_brightness", on).apply() }
+    fun changeDeltaBoxes(on: Boolean) { deltaBoxes = on; prefs.edit().putBoolean("delta_boxes", on).apply() }
     fun changeHdrChevrons(on: Boolean) { hdrChevrons = on; prefs.edit().putBoolean("hdr_chevrons", on).apply() }
     fun changeHdrManualBoost(v: Float) { hdrManualBoost = v; prefs.edit().putFloat("hdr_manual_boost", v).apply() }
 

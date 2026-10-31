@@ -1,4 +1,6 @@
-# WHRRAH Android
+# We Have RaceRender At pHone
+
+*WHRRAH Android*
 
 A phone-based data logger and lap timer for autocross, built to replace an AiM Solo:
 a **RaceBox Mini** for 25 Hz GPS + IMU, a **DJI Osmo Action 4** for video (started

@@ -67,6 +67,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** App-wide chrome switches: [immersive] = a screen (the fullscreen video player) has hidden the header. */
+object UiChrome {
+    var immersive by mutableStateOf(false)
+}
+
 enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
@@ -91,7 +96,7 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
         // Landscape session screen: no header up top — it slides up from the bottom on a swipe (SessionLandscape).
         val landscapeSession = screen == Screen.SESSION && ctl.session != null &&
             androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        if (!landscapeSession) header(false)
+        if (!landscapeSession && !UiChrome.immersive) header(false)
         val m = Modifier.fillMaxSize()
         when (screen) {
             Screen.HOME -> HomeScreen(m, onNew = { go(Screen.NEW_SESSION) }, onOpen = { go(Screen.OPEN_SESSION) },

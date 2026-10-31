@@ -283,7 +283,6 @@ private fun RunPlayer(
 
     // Data clock time of a video position, and the line crossings on the same clock.
     val synced = lap.videoStartMs != null && lap.startCrossMs != null && lap.finishCrossMs != null
-    fun seekToData(dataMs: Long) { view?.seekTo((dataMs - lap.videoStartMs!!).toInt().coerceAtLeast(0)) }
 
     // The part of the clip that's shown: pad start before the start line to pad end after the finish
     // (desktop's Pad Start / Pad End), as far as the clip and the timing allow; else the whole clip.
@@ -432,11 +431,7 @@ private fun RunPlayer(
             Text("Run ${lap.n} · ${file.name}" + (if (idx == 0 && candidates.size > 1) " · low-res preview" else " · full res") +
                 (if (layout != null && lap.videoStartMs == null) if (videoStartMs != null) " · overlay timing approximate (not synced)" else " · no overlay: run isn't matched to its clip" else ""),
                 style = MaterialTheme.typography.bodySmall)
-            if (synced) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // A couple of seconds of run-up before each line.
-                OutlinedButton(onClick = { seekToData(lap.startCrossMs!! - 2000) }) { Text("Jump to start") }
-                OutlinedButton(onClick = { seekToData(lap.finishCrossMs!! - 2000) }) { Text("Jump to finish") }
-            } else Text("Not synced to the data yet — the lap overlay and jumps need a sync (RaceBox + clip gyro).",
+            if (!synced) Text("Not synced to the data yet — the lap overlay needs a sync (RaceBox + clip gyro).",
                 style = MaterialTheme.typography.bodySmall)
         }
     }

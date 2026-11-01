@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.nativeCanvas
@@ -388,7 +389,34 @@ private fun Stat(label: String, value: String) {
 private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt: Float) {
     var open by remember { mutableStateOf(!s.trackDefined) }
     var error by remember { mutableStateOf<String?>(null) }
+    var confirm by remember { mutableStateOf<WalkConfirm?>(null) }
     val recording = ctl.walkRecording
+    confirm?.let { c ->
+        val (title, body, action) = when (c) {
+            WalkConfirm.NEW -> Triple("Record a new walk?", "Clears the current walk and both start/finish lines, then starts recording. " +
+                "Runs keep their times until the new lines are set.", "Reset & record")
+            WalkConfirm.CONTINUE -> Triple("Continue the walk?", "Starts recording again and adds to the existing walk. The lines stay as they are.", "Continue")
+            WalkConfirm.RESET_START -> Triple("Move the start line here?", "Replaces the start line with one at your current position and direction.", "Move start")
+            WalkConfirm.RESET_FINISH -> Triple("Move the finish line here?", "Replaces the finish line with one at your current position and direction.", "Move finish")
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text(title) }, text = { Text(body) },
+            confirmButton = {
+                TextButton(onClick = {
+                    error = null
+                    when (c) {
+                        WalkConfirm.NEW -> ctl.startTrackWalk(append = false)
+                        WalkConfirm.CONTINUE -> ctl.startTrackWalk(append = true)
+                        WalkConfirm.RESET_START -> error = ctl.setLine(true)
+                        WalkConfirm.RESET_FINISH -> error = ctl.setLine(false)
+                    }
+                    confirm = null
+                }) { Text(action, color = if (c == WalkConfirm.CONTINUE) Color.Unspecified else Color(0xFFE53935)) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
+        )
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -408,11 +436,15 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
                         "as you reach them. Lines are %.0f ft wide (Settings), across your direction of travel. ".format(widthFt) +
                         "To match official timing, nudge a line along the course: + is further down the course, − is back.",
                         style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { error = null; ctl.startTrackWalk(append = false) }) {
-                            Text(if (s.trackWalkFile == null) "Record track walk" else "Record new walk")
+                    if (s.trackWalkFile == null && !s.trackDefined)
+                        Button(onClick = { error = null; ctl.startTrackWalk(append = false) }, Modifier.fillMaxWidth().height(56.dp)) { Text("Record track walk") }
+                    else {
+                        // Both change the track, so: long-press, then confirm.
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LongPressButton("Record new walk", "long-press · resets the track", Modifier.weight(1f), filled = true) { confirm = WalkConfirm.NEW }
+                            if (s.trackWalkFile != null)
+                                LongPressButton("Continue walk", "long-press", Modifier.weight(1f), filled = false) { confirm = WalkConfirm.CONTINUE }
                         }
-                        if (s.trackWalkFile != null) OutlinedButton(onClick = { error = null; ctl.startTrackWalk(append = true) }) { Text("Continue walk") }
                     }
                     TrackLineSummary("Start", s.start) { m, undo -> ctl.nudgeLine(true, m, undo) }
                     TrackLineSummary("Finish", s.finish) { m, undo -> ctl.nudgeLine(false, m, undo) }
@@ -424,9 +456,15 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
                             modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
                     }
                     Text("Walk toward each line in the driving direction, stop on it, tap.", style = MaterialTheme.typography.bodySmall)
-                    TrackLineRow("Start", s.start, fix != null) { error = ctl.setLine(true) }
-                    TrackLineRow("Finish", s.finish, fix != null) { error = ctl.setLine(false) }
-                    OutlinedButton(onClick = ctl::stopTrackWalk) { Text("Stop recording") }
+                    // Big side-by-side buttons: tap to set; once set they light up, and moving the line
+                    // takes a long-press + confirm (so a stray tap can't move it).
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LineButton("Start", s.start, Color(0xFF2E7D32), fix != null, Modifier.weight(1f),
+                            onSet = { error = ctl.setLine(true) }, onResetAsk = { confirm = WalkConfirm.RESET_START })
+                        LineButton("Finish", s.finish, Color(0xFFC62828), fix != null, Modifier.weight(1f),
+                            onSet = { error = ctl.setLine(false) }, onResetAsk = { confirm = WalkConfirm.RESET_FINISH })
+                    }
+                    OutlinedButton(onClick = ctl::stopTrackWalk, modifier = Modifier.fillMaxWidth()) { Text("Stop recording") }
                 }
                 error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE0A000)) }
                 if (s.start != null || s.finish != null || ctl.walkPath.isNotEmpty() || recording)
@@ -459,22 +497,66 @@ private fun TrackLineSummary(label: String, l: TrackLine?, onNudge: (meters: Dou
     }
 }
 
+private enum class WalkConfirm { NEW, CONTINUE, RESET_START, RESET_FINISH }
+
+/** A button that only acts on a long-press (with a buzz) — for things a stray tap shouldn't do. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun TrackLineRow(label: String, l: TrackLine?, canSet: Boolean, onSet: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+private fun LongPressButton(label: String, hint: String, modifier: Modifier, filled: Boolean, onLongPress: () -> Unit) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)
+    androidx.compose.material3.Surface(
+        modifier = modifier.height(64.dp).clip(shape).combinedClickable(onClick = {}, onLongClick = {
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongPress()
+        }),
+        shape = shape,
+        color = if (filled) MaterialTheme.colorScheme.primary else Color.Transparent,
+        contentColor = if (filled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+        border = if (filled) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(label, style = MaterialTheme.typography.titleMedium)
+            Text(hint, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+/**
+ * A big start/finish button for the walk. Not set: tap to set it here. Set: lit in [color] with a
+ * tick and the line's details; a tap does nothing, a long-press asks to move it here.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LineButton(label: String, l: TrackLine?, color: Color, canSet: Boolean, modifier: Modifier,
+                       onSet: () -> Unit, onResetAsk: () -> Unit) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val set = l != null && l.headingDeg != null
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    androidx.compose.material3.Surface(
+        modifier = modifier.height(140.dp).clip(shape).combinedClickable(
+            enabled = canSet,
+            onClick = { if (!set) onSet() },
+            onLongClick = {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                if (set) onResetAsk() else onSet()
+            }),
+        shape = shape,
+        color = if (set) color else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (set) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+        border = if (set) null else androidx.compose.foundation.BorderStroke(2.dp, color),
+    ) {
+        Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(if (set) "✓ $label set" else "Set $label", style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             Text(
                 when {
-                    l == null -> "not set"
-                    l.headingDeg == null -> "point only (set before lines existed) — reset it"
-                    else -> "%.6f, %.6f · facing %.0f° · %.0f ft%s".format(l.lat, l.lon, l.headingDeg, l.widthM / Geo.FT,
-                        l.accuracyM?.let { a -> " · ±%.1f m".format(a) } ?: "")
+                    !canSet -> "waiting for GPS"
+                    !set -> "tap when you're on the line"
+                    else -> "facing %.0f°%s\nlong-press to move".format(l!!.headingDeg, l.accuracyM?.let { " · ±%.1f m".format(it) } ?: "")
                 },
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
-        Button(onClick = onSet, enabled = canSet) { Text(if (l == null) "Set $label" else "Reset") }
     }
 }
 

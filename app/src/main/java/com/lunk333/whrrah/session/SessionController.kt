@@ -715,9 +715,11 @@ class SessionController private constructor(context: Context) {
     private var walkWriter: BufferedWriter? = null
 
     /** Start recording the course walk. [append] continues the existing trace instead of starting over. */
+    /** [append] = continue the existing walk; otherwise a new walk, which also clears both lines (a fresh track). */
     fun startTrackWalk(append: Boolean) {
-        val s = session ?: return
+        var s = session ?: return
         stopTrackWalk()
+        if (!append && (s.start != null || s.finish != null)) { s = s.copy(start = null, finish = null); update(s) }
         startGps()
         val f = File(store.gpsDir(s.id), WALK_FILE)
         val keep = append && f.isFile

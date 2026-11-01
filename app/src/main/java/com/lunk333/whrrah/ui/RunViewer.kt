@@ -118,7 +118,6 @@ fun RunViewerScreen(modifier: Modifier) {
     val layoutResult = remember(layoutName) { layoutFiles.firstOrNull { it.name == layoutName }?.let(layouts::load) }
     val layout = layoutResult?.getOrNull()
 
-    var fullscreen by remember { mutableStateOf(false) }
     // Long-press a run → render / export it to the gallery.
     var exportAsk by remember { mutableStateOf<Int?>(null) }
     exportAsk?.let { n ->
@@ -141,16 +140,15 @@ fun RunViewerScreen(modifier: Modifier) {
         )
     }
     var settingsOpen by remember { mutableStateOf(false) }
-    if (file == null && fullscreen) fullscreen = false
-    FullscreenEffect(fullscreen)
-    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
+    val chrome = rememberPlayerChrome(hasClip = lap != null && file != null)
+    val fullscreen = chrome.active
 
     Column(modifier) {
         // The player sits above the list (and fills the screen in fullscreen) — always in this slot, so
         // switching runs or going fullscreen keeps the same video view.
         if (lap != null && file != null) RunPlayer(
             lap, file.name, file, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
-            onFullscreen = { fullscreen = !fullscreen }, onSettings = { settingsOpen = true },
+            onFullscreen = chrome.toggle, onSettings = { settingsOpen = true },
             onPrev = prevRun?.let { { selected = it } }, onNext = nextRun?.let { { selected = it } },
         )
         if (!fullscreen) LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -234,7 +232,6 @@ fun BrowseDownloadsScreen(modifier: Modifier) {
     val layoutResult = remember(layoutName) { layoutFiles.firstOrNull { it.name == layoutName }?.let(layouts::load) }
     val layout = layoutResult?.getOrNull()
 
-    var fullscreen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var exportAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
     var deleteAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
@@ -252,16 +249,15 @@ fun BrowseDownloadsScreen(modifier: Modifier) {
             dismissButton = { TextButton(onClick = { deleteAsk = null }) { Text("Cancel") } },
         )
     }
-    if (cur == null && fullscreen) fullscreen = false
-    FullscreenEffect(fullscreen)
-    androidx.activity.compose.BackHandler(enabled = fullscreen) { fullscreen = false }
+    val chrome = rememberPlayerChrome(hasClip = cur != null)
+    val fullscreen = chrome.active
 
     Column(modifier) {
         if (cur != null) {
             val (s, l) = cur
             // Previous / next = the neighbouring entries in the list (older is further down).
             RunPlayer(l, l.clip!!, null, s, ctl, if (showOverlay) layout else null, fullscreen, padStart, padEnd,
-                onFullscreen = { fullscreen = !fullscreen }, onSettings = { settingsOpen = true },
+                onFullscreen = chrome.toggle, onSettings = { settingsOpen = true },
                 onPrev = entries.getOrNull(idx + 1)?.let { (ps, pl) -> { selected = key(ps, pl) } },
                 onNext = entries.getOrNull(idx - 1)?.let { (ns, nl) -> { selected = key(ns, nl) } })
         }
@@ -504,25 +500,65 @@ private fun rememberThumbnail(link: OsmoLink, file: CameraFile?, dir: File): and
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private val THUMB_IO = Dispatchers.IO.limitedParallelism(2)
 
+/** Whether the player is fullscreen, and the fullscreen button's action. */
+private class PlayerChrome(val active: Boolean, val toggle: () -> Unit)
+
+/**
+ * YouTube-style fullscreen for the player: the button goes fullscreen (locked to landscape), and so
+ * does turning the phone sideways while a clip is open. Leaving it (the button or Back) returns to
+ * portrait even if the phone is still held sideways; auto-rotate comes back once it's been upright.
+ */
+@Composable
+private fun rememberPlayerChrome(hasClip: Boolean): PlayerChrome {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val activity = view.context as? android.app.Activity
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    var byButton by remember { mutableStateOf(false) }
+    var heldPortrait by remember { mutableStateOf(false) }
+    if (!hasClip && byButton) byButton = false
+    val active = hasClip && (byButton || (landscape && !heldPortrait))
+    FullscreenEffect(active, lockLandscape = byButton)
+    // Held in portrait after leaving fullscreen, until the phone is actually turned upright.
+    DisposableEffect(heldPortrait) {
+        var listener: android.view.OrientationEventListener? = null
+        if (heldPortrait && activity != null) {
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            listener = object : android.view.OrientationEventListener(activity) {
+                override fun onOrientationChanged(deg: Int) {
+                    if (deg != ORIENTATION_UNKNOWN && (deg < 25 || deg > 335)) heldPortrait = false
+                }
+            }.also { it.enable() }
+        }
+        onDispose {
+            listener?.disable()
+            if (heldPortrait) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
+    }
+    fun exit() { byButton = false; heldPortrait = true }
+    androidx.activity.compose.BackHandler(enabled = active) { exit() }
+    return PlayerChrome(active) { if (active) exit() else { heldPortrait = false; byButton = true } }
+}
+
 /**
  * Fullscreen player: landscape (either way round, by the sensor), no system bars, no app header.
  * Undone when it ends or the screen goes away.
  */
 @Composable
-private fun FullscreenEffect(on: Boolean) {
+private fun FullscreenEffect(on: Boolean, lockLandscape: Boolean) {
     val view = androidx.compose.ui.platform.LocalView.current
-    DisposableEffect(on) {
+    DisposableEffect(on, lockLandscape) {
         val activity = view.context as? android.app.Activity
         val bars = activity?.window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
         if (on) {
-            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (lockLandscape) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             bars?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             bars?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             UiChrome.immersive = true
         }
         onDispose {
             if (on) {
-                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                if (lockLandscape) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
                 bars?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
                 UiChrome.immersive = false
             }

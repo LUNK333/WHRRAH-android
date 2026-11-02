@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         handleIncomingIntent(intent)
         val coldStart = savedInstanceState == null
+        com.lunk333.whrrah.settings.AppSettings.get(this)   // loads the time format before anything is drawn
         setContent {
             WHRRAHTheme {
                 Scaffold { innerPadding ->

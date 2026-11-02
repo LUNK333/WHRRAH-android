@@ -869,7 +869,7 @@ private fun PlayerButton(icon: PlayerIcon, size: androidx.compose.ui.unit.Dp, mo
     }
 }
 
-private fun fmtLap(ms: Long?): String = ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—"
+private fun fmtLap(ms: Long?): String = com.lunk333.whrrah.settings.TimeFormat.run(ms)
 
 /** Show/hide the overlay and pick which layout from the layouts folder. */
 @Composable

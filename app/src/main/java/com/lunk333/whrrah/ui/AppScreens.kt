@@ -227,7 +227,7 @@ private fun ConnectionStatus() {
     }
 }
 
-private fun formatLap(ms: Long?): String = ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—"
+private fun formatLap(ms: Long?): String = com.lunk333.whrrah.settings.TimeFormat.run(ms)
 
 // ---- home ------------------------------------------------------------------------------------
 
@@ -756,6 +756,7 @@ private fun SettingsScreen(modifier: Modifier) {
         item { Toggle("Auto-connect camera while a session is open", settings.autoConnectCamera, settings::changeAutoConnectCamera) }
         item { Toggle("Pull each new clip's gyro automatically", settings.autoFetchGyro, settings::changeAutoFetchGyro) }
         item { Toggle("Use phone GPS when no RaceBox is connected", settings.phoneGpsFallback, settings::changePhoneGpsFallback) }
+        item { Toggle("Show times in seconds (65.123 instead of 1:05.123)", settings.timesInSeconds, settings::changeTimesInSeconds) }
         item { Toggle("Full screen brightness on the landscape timer", settings.forceFullBrightness, settings::changeForceFullBrightness) }
         item { DeltaStyleSetting(settings) }
         item {
@@ -880,7 +881,7 @@ private fun LapTimerCard(ctl: SessionController, s: Session) {
     }
 }
 
-private fun fmtTimer(ms: Long?) = ms?.let { "%d:%02d.%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: "—:——.———"
+private fun fmtTimer(ms: Long?) = com.lunk333.whrrah.settings.TimeFormat.run(ms, com.lunk333.whrrah.settings.TimeFormat.placeholder)
 
 /** What the lap timer shows: (time, caption, colour). Ticks itself while a lap is live. */
 @Composable

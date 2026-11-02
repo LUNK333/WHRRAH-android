@@ -19,6 +19,8 @@ class AppSettings private constructor(context: Context) {
     var autoFetchGyro by mutableStateOf(prefs.getBoolean("auto_fetch_gyro", true)); private set
     /** Use the phone's GPS when no RaceBox is connected. */
     var phoneGpsFallback by mutableStateOf(prefs.getBoolean("phone_gps_fallback", true)); private set
+    /** Run times as seconds only ("65.123") instead of minutes:seconds. */
+    var timesInSeconds by mutableStateOf(prefs.getBoolean("times_in_seconds", false).also { TimeFormat.secondsOnly = it }); private set
     /** Landscape timer: run the screen at full brightness while it's up. */
     var forceFullBrightness by mutableStateOf(prefs.getBoolean("force_full_brightness", true)); private set
     /** Landscape timer: the delta indicators are boxes instead of chevrons. */
@@ -50,6 +52,7 @@ class AppSettings private constructor(context: Context) {
     fun changeAutoConnectCamera(on: Boolean) { autoConnectCamera = on; prefs.edit().putBoolean("auto_connect_camera", on).apply() }
     fun changeAutoFetchGyro(on: Boolean) { autoFetchGyro = on; prefs.edit().putBoolean("auto_fetch_gyro", on).apply() }
     fun changePhoneGpsFallback(on: Boolean) { phoneGpsFallback = on; prefs.edit().putBoolean("phone_gps_fallback", on).apply() }
+    fun changeTimesInSeconds(on: Boolean) { timesInSeconds = on; TimeFormat.secondsOnly = on; prefs.edit().putBoolean("times_in_seconds", on).apply() }
     fun changeForceFullBrightness(on: Boolean) { forceFullBrightness = on; prefs.edit().putBoolean("force_full_brightness", on).apply() }
     fun changeDeltaBoxes(on: Boolean) { deltaBoxes = on; prefs.edit().putBoolean("delta_boxes", on).apply() }
     fun changeHdrChevrons(on: Boolean) { hdrChevrons = on; prefs.edit().putBoolean("hdr_chevrons", on).apply() }

@@ -162,7 +162,7 @@ class SessionController private constructor(context: Context) {
         val fixes = lap.gpsFile?.let { LapTimer.readGpsCsv(File(store.gpsDir(s.id), it)) } ?: emptyList()
         val r = LapTimer.time(fixes, s.start, s.finish)
         updateLap(n) { it.copy(lapTimeMs = r.lapTimeMs, startCrossMs = r.startMs, finishCrossMs = r.finishMs, timingNote = r.note) }
-        if (r.lapTimeMs != null) activity = "Run $n: %d:%06.3f".format(r.lapTimeMs / 60000, (r.lapTimeMs % 60000) / 1000.0)
+        if (r.lapTimeMs != null) activity = "Run $n: " + com.lunk333.whrrah.settings.TimeFormat.run(r.lapTimeMs)
     }
 
     /** Re-time every finished run (after a line is set or nudged, or when the session opens). */

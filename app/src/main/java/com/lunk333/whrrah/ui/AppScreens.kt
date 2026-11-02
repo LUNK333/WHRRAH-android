@@ -692,9 +692,12 @@ private fun TrackSketch(start: TrackLine?, finish: TrackLine?, walk: List<Geo.La
 private fun LapRow(lap: Lap, s: Session, onLongPress: () -> Unit) {
     val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // Guest (co-driver) runs get a tinted card so the two drivers' runs are easy to tell apart.
+    val guest = lap.driver != null && lap.driver != s.driver
     Card(Modifier.fillMaxWidth().pointerInput(lap.n) {
         detectTapGestures(onLongPress = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongPress() })
-    }) {
+    }, colors = if (guest) androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer) else androidx.compose.material3.CardDefaults.cardColors()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Run ${lap.n}" + ((lap.driver ?: s.driver).takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +

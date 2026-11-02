@@ -169,7 +169,7 @@ fun RunViewerScreen(modifier: Modifier) {
             }
             items(runs, key = { it.n }) { r ->
                 val onPhone = remember(r.clip, ctl.downloadsDone) { ctl.clipFile(s, r.clip!!).isFile }
-                RunRow(r, best = r.effectiveTimeMs != null && r.effectiveTimeMs == s.bestLapMs, selected = r.n == selected,
+                RunRow(r, best = s.isDriverBest(r), selected = r.n == selected, title = "Run ${s.runNo(r)} · ${s.driverOf(r)}",
                     thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
                     onPhone = onPhone, progress = ctl.downloads[r.clip],
                     onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) }, onDelete = { deleteAsk = r.n },
@@ -270,9 +270,9 @@ fun BrowseDownloadsScreen(modifier: Modifier) {
                     style = MaterialTheme.typography.bodyMedium)
             }
             items(entries, key = { (s, l) -> key(s, l) }) { (s, l) ->
-                RunRow(l, best = l.effectiveTimeMs != null && l.effectiveTimeMs == s.bestLapMs, selected = key(s, l) == selected,
+                RunRow(l, best = s.isDriverBest(l), selected = key(s, l) == selected,
                     thumb = rememberLocalThumbnail(ctl.clipFile(s, l.clip!!), File(ctl.store.dir(s.id), "video/thumbs")),
-                    onPhone = true, progress = null, title = "${s.event}, Run ${l.n}", allowDownload = false,
+                    onPhone = true, progress = null, title = "${s.event}, Run ${s.runNo(l)} · ${s.driverOf(l)}", allowDownload = false,
                     onClick = { selected = key(s, l) }, onDownload = {}, onDelete = { deleteAsk = s to l },
                     onLongPress = { exportAsk = s to l })
             }
@@ -348,6 +348,7 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
         colors = if (selected) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.cardColors(),
+        border = if (best) androidx.compose.foundation.BorderStroke(3.dp, Color(0xFFFFC107)) else null,
     ) {
         Row(Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -383,7 +384,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
     if (removeAsk) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { removeAsk = false },
-            title = { Text("Remove this clip from run ${lap.n}?") },
+            title = { Text("Remove this clip from run ${s.runNo(lap)}?") },
             text = { Text("Unlinks ${lap.clip} from the run (and deletes the phone's copy, if any), so it's not listed here " +
                 "and won't be matched again. The run keeps its timing data; the clip stays on the camera.") },
             confirmButton = { TextButton(onClick = { ctl.removeClipFromSession(lap.n, s); removeAsk = false; onRemoved(); onDismiss() }) {
@@ -404,7 +405,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!exporter.running) onDismiss() },
-        title = { Text(if (started) "Export run ${lap.n}" else "Run ${lap.n}") },
+        title = { Text(if (started) "Export run ${s.runNo(lap)}" else "Run ${s.runNo(lap)} · ${s.driverOf(lap)}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (!started) {
@@ -446,7 +447,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
                             val data = withContext(Dispatchers.IO) {
                                 runCatching {
                                     RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                                        lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.effectiveTimeMs })
+                                        lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs })
                                 }.getOrNull()
                             }
                             com.lunk333.whrrah.export.ClipExporter.Overlay(layout, data, videoStartMs)
@@ -457,7 +458,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
                             ?: Uri.parse("http://${OsmoLink.IP}" + dev.konraditurbe.osmosis.camera.PathAddressing.original(remote!!))
                         val safe = s.event.replace(Regex("[^A-Za-z0-9_-]+"), "_").trim('_')
                         val lapPart = lap.lapTimeMs?.let { "_%d-%02d-%03d".format(it / 60000, (it / 1000) % 60, it % 1000) } ?: ""
-                        val name = "WHRRAH_${safe}_run${lap.n}$lapPart" + (if (o != null) "_overlay" else "") + "_${System.currentTimeMillis() / 1000}.mp4"
+                        val name = "WHRRAH_${safe}_${s.driverOf(lap).replace(Regex("[^A-Za-z0-9]+"), "")}_run${s.runNo(lap)}$lapPart" + (if (o != null) "_overlay" else "") + "_${System.currentTimeMillis() / 1000}.mp4"
                         exporter.start(src, name, start, end, o)
                     }
                 }) { Text("Export") }
@@ -615,7 +616,7 @@ private fun RunPlayer(
         value = withContext(Dispatchers.IO) {
             runCatching {
                 RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                    lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.effectiveTimeMs })
+                    lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs })
             }.getOrNull()
         }
     }
@@ -769,7 +770,7 @@ private fun RunPlayer(
         }
         }
         if (!fullscreen) Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Run ${lap.n} · ${clip}" + (when {
+            Text("Run ${s.runNo(lap)} · ${s.driverOf(lap)} · ${clip}" + (when {
                     local != null && idx == 0 -> " · from the phone"
                     idx == (if (local != null) 1 else 0) && candidates.size > (if (local != null) 2 else 1) -> " · low-res preview"
                     else -> " · full res" }) +

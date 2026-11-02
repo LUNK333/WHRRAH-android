@@ -331,10 +331,10 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
         val lap = s.laps.firstOrNull { it.n == n }
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { deleteAsk = null },
-            title = { Text("Delete run $n?") },
+            title = { Text("Delete run ${lap?.let { s.runNo(it) } ?: n}?") },
             text = {
                 Text(if (lap?.recording == true) "Run $n is still recording — stop it first."
-                    else "Removes run $n" + (lap?.lapTimeMs?.let { " (${formatLap(it)})" } ?: "") +
+                    else "Removes run ${lap?.let { s.runNo(it) } ?: n}" + (lap?.lapTimeMs?.let { " (${formatLap(it)})" } ?: "") +
                         " from the session and deletes its GPS, RaceBox and gyro logs. This can't be undone." +
                         (if (lap?.clip != null) " The video clip stays on the camera." else ""))
             },
@@ -619,7 +619,7 @@ private fun RunMenu(lap: Lap, s: Session, onSave: (driver: String?, dnf: Boolean
     val officialBad = official.isNotBlank() && officialMs == null
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Run ${lap.n}" + (lap.lapTimeMs?.let { " · ${formatLap(it)}" } ?: "")) },
+        title = { Text("Run ${s.runNo(lap)}" + (lap.lapTimeMs?.let { " · ${formatLap(it)}" } ?: "")) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Driver", style = MaterialTheme.typography.titleSmall)
@@ -728,10 +728,12 @@ private fun LapRow(lap: Lap, s: Session, onLongPress: () -> Unit) {
     Card(Modifier.fillMaxWidth().pointerInput(lap.n) {
         detectTapGestures(onLongPress = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); onLongPress() })
     }, colors = if (guest) androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer) else androidx.compose.material3.CardDefaults.cardColors()) {
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer) else androidx.compose.material3.CardDefaults.cardColors(),
+        // Each driver's best run gets a gold outline.
+        border = if (s.isDriverBest(lap)) androidx.compose.foundation.BorderStroke(3.dp, Color(0xFFFFC107)) else null) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Run ${lap.n}" + ((lap.driver ?: s.driver).takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
+                Text((if (s.isDriverBest(lap)) "★ " else "") + "Run ${s.runNo(lap)}" + s.driverOf(lap).takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty() +
                     if (lap.recording) "  ● recording" else "", style = MaterialTheme.typography.titleMedium)
                 Column(horizontalAlignment = Alignment.End) {
                     Text(if (lap.dnf) "DNF" else formatLap(lap.effectiveTimeMs ?: lap.lapTimeMs),
@@ -896,7 +898,7 @@ private fun RunButton(ctl: SessionController) {
         Button(
             onClick = ctl::stopRunFromPhone, modifier = Modifier.fillMaxWidth().height(56.dp),
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-        ) { Text("Stop run ${run.n}  ·  %d:%02d  ·  %d GPS fixes".format(secs / 60, secs % 60, run.gpsFixes)) }
+        ) { Text("Stop run ${ctl.session?.runNo(run) ?: run.n}  ·  %d:%02d  ·  %d GPS fixes".format(secs / 60, secs % 60, run.gpsFixes)) }
     }
 }
 
@@ -932,12 +934,12 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
     LaunchedEffect(live) { while (live) { now = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(31) } }
     val last = s.laps.lastOrNull { !it.recording }
     return when {
-        run != null && ctl.liveLapMs != null -> Triple(ctl.liveLapMs, "Run ${run.n} · finished", Color(0xFF43A047))
-        live -> Triple((now - start!!).toLong().coerceAtLeast(0), "Run ${run!!.n} · on course", Color(0xFFE53935))
-        run != null -> Triple(0L, "Run ${run.n} · waiting for the start line", MaterialTheme.colorScheme.onSurface)
-        last != null -> Triple(last.lapTimeMs, "Run ${last.n}" + (if (last.lapTimeMs == null) " · no time" else "") +
+        run != null && ctl.liveLapMs != null -> Triple(ctl.liveLapMs, "Run ${s.runNo(run)} · finished", Color(0xFF43A047))
+        live -> Triple((now - start!!).toLong().coerceAtLeast(0), "Run ${s.runNo(run!!)} · on course", Color(0xFFE53935))
+        run != null -> Triple(0L, "Run ${s.runNo(run)} · waiting for the start line", MaterialTheme.colorScheme.onSurface)
+        last != null -> Triple(last.lapTimeMs, "Run ${s.runNo(last)}" + (if (last.lapTimeMs == null) " · no time" else "") +
             (if (last.dnf) " · DNF" else "") + (if (last.cones > 0) " · +${last.cones} cone${if (last.cones > 1) "s" else ""}" else "") +
-            (if (last.effectiveTimeMs != null && last.effectiveTimeMs == s.bestLapMs) " · best" else ""), MaterialTheme.colorScheme.onSurface)
+            (if (s.isDriverBest(last)) " · best" else ""), MaterialTheme.colorScheme.onSurface)
         else -> Triple(0L, "No runs yet", MaterialTheme.colorScheme.onSurface)
     }
 }
@@ -1210,7 +1212,7 @@ private fun LandscapeRunButton(ctl: SessionController, modifier: Modifier) {
         Button(onClick = ctl::stopRunFromPhone, modifier = modifier, shape = shape,
             colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Stop run ${run.n}", style = MaterialTheme.typography.headlineSmall)
+                Text("Stop run ${ctl.session?.runNo(run) ?: run.n}", style = MaterialTheme.typography.headlineSmall)
                 Text("%d:%02d".format(secs / 60, secs % 60), style = MaterialTheme.typography.bodyMedium)
             }
         }

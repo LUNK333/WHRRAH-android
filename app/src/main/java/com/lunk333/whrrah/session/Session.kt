@@ -232,6 +232,18 @@ data class Session(
     /** Best time with cone penalties, DNFs left out. */
     val bestLapMs: Long? get() = laps.mapNotNull { it.effectiveTimeMs }.minOrNull()
 
+    /** Who drove [l]: its driver, else the session's. */
+    fun driverOf(l: Lap): String = l.driver ?: driver
+
+    /** [l]'s run number for its driver — their 1st, 2nd… run, in recording order (the stored n is per session). */
+    fun runNo(l: Lap): Int = laps.count { driverOf(it) == driverOf(l) && it.n <= l.n }
+
+    /** Best time (with cones, no DNFs) of [l]'s driver. */
+    fun bestFor(l: Lap): Long? = laps.filter { driverOf(it) == driverOf(l) }.mapNotNull { it.effectiveTimeMs }.minOrNull()
+
+    /** [l] is its driver's best run. */
+    fun isDriverBest(l: Lap): Boolean = l.effectiveTimeMs != null && l.effectiveTimeMs == bestFor(l)
+
     /** Mean official − measured over the runs that have an official time (null without any). */
     val officialDiffMeanMs: Long? get() = laps.mapNotNull { it.officialDiffMs }.takeIf { it.isNotEmpty() }?.let { d -> d.sum() / d.size }
 

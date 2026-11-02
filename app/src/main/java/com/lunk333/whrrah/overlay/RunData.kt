@@ -13,7 +13,9 @@ import kotlin.math.min
  *   `GPS Heading` (deg), and the GPS-derived `GPS LonAcc` / `GPS LatAcc` (G; + = accelerating /
  *   turning right, as in AiM logs — the desktop G Meter flips both by default);
  * - from the RaceBox motion log: `InlineAcc`, `LateralAcc`, `VerticalAcc` (G) and `RollRate`,
- *   `PitchRate`, `YawRate` (deg/s) — straight from the RaceBox axes, so they depend on how it's mounted.
+ *   `PitchRate`, `YawRate` (deg/s) in the car's own axes whatever way the RaceBox is mounted
+ *   ([vehicleFrame]): + = accelerating / pushed right (right turn) / up; roll + = right side down,
+ *   pitch + = nose up, yaw + = turning right.
  *
  * Time is seconds on the run's data clock (GNSS UTC ms / 1000 with the RaceBox), the same clock as
  * the run's line crossings and its video sync.
@@ -176,13 +178,57 @@ class RunData(
             }.filter { it[0] > 0 }.sortedBy { it[0] }
             if (rows.size < 2) return this
             val its = DoubleArray(rows.size) { rows[it][0] }
+            // Into the car's axes when the mounting can be worked out from the run; else the raw axes.
+            val frame = vehicleFrame(rows)
+            val vehicle = rows.map { r ->
+                if (frame == null) r.copyOf() else {
+                    val (fw, rt, up) = frame
+                    val a = doubleArrayOf(r[1], r[2], r[3]); val w = doubleArrayOf(r[4], r[5], r[6])
+                    doubleArrayOf(r[0], dot(a, fw), dot(a, rt), dot(a, up), dot(w, fw), dot(w, rt), -dot(w, up))
+                }
+            }
             val names = listOf("InlineAcc", "LateralAcc", "VerticalAcc", "RollRate", "PitchRate", "YawRate")
             val ch = LinkedHashMap(channels)
             names.forEachIndexed { k, name ->
-                val src = RunData(its, mapOf(name to DoubleArray(rows.size) { rows[it][k + 1] }), null, null, 0, emptyList())
+                val src = RunData(its, mapOf(name to DoubleArray(rows.size) { vehicle[it][k + 1] }), null, null, 0, emptyList())
                 ch[name] = DoubleArray(timestamps.size) { src.valueAt(name, timestamps[it]) }
             }
             return RunData(timestamps, ch, startS, finishS, runNumber, earlierLapsS)
+        }
+
+        /**
+         * The RaceBox's mounting, from the run itself: "up" is the average acceleration reading while the
+         * car is stopped (gravity), "forward" the axis whose acceleration matches the GPS speed changes
+         * (made square to up), "right" = forward × up. Unit vectors in the RaceBox's axes, or null when the
+         * run has no stop or too little driving to tell.
+         * [rows]: (t s, gx, gy, gz, roll, pitch, yaw) — RaceBox axes.
+         */
+        private fun RunData.vehicleFrame(rows: List<DoubleArray>): Triple<DoubleArray, DoubleArray, DoubleArray>? {
+            val speed = channels[SPEED] ?: return null
+            val lat = channels[LAT] ?: return null
+            val lon = channels[LON] ?: return null
+            // Up: mean reading while stopped (≥ 1 s of samples).
+            val still = rows.filter { valueAt(SPEED, it[0]) / MPH_PER_MPS < 0.2 }
+            if (still.size < 25) return null
+            val up = norm(doubleArrayOf(still.sumOf { it[1] }, still.sumOf { it[2] }, still.sumOf { it[3] })) ?: return null
+            // Forward: least-squares fit of GPS longitudinal acceleration on the three axes.
+            val fixes = timestamps.indices.map { i ->
+                com.lunk333.whrrah.session.LapTimer.Fix(Math.round(timestamps[i] * 1000), lat[i], lon[i], speed[i] / MPH_PER_MPS)
+            }
+            val imu = rows.map { com.lunk333.whrrah.session.LapTimer.Imu(Math.round(it[0] * 1000), it[1], it[2], it[3]) }
+            val w = com.lunk333.whrrah.session.LapTimer.forwardAxis(imu, fixes) ?: return null
+            val raw = doubleArrayOf(w[0], w[1], w[2])
+            val fw = norm(doubleArrayOf(raw[0] - dot(raw, up) * up[0], raw[1] - dot(raw, up) * up[1], raw[2] - dot(raw, up) * up[2])) ?: return null
+            val rt = cross(fw, up)
+            return Triple(fw, rt, up)
+        }
+
+        private fun dot(a: DoubleArray, b: DoubleArray) = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        private fun cross(a: DoubleArray, b: DoubleArray) =
+            doubleArrayOf(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+        private fun norm(v: DoubleArray): DoubleArray? {
+            val l = Math.sqrt(dot(v, v))
+            return if (l < 1e-6) null else doubleArrayOf(v[0] / l, v[1] / l, v[2] / l)
         }
 
         /**

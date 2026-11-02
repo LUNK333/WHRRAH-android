@@ -124,7 +124,8 @@ fun RunViewerScreen(modifier: Modifier) {
         val r = s.laps.firstOrNull { it.n == n }
         val f = r?.clip?.let { c -> link.files.firstOrNull { it.name == c } }
         if (r == null || f == null) exportAsk = null
-        else ExportDialog(r, f, s, ctl, if (layout != null) layout else null, showOverlay, padStart, padEnd) { exportAsk = null }
+        else ExportDialog(r, f, s, ctl, if (layout != null) layout else null, showOverlay, padStart, padEnd,
+            onRemoved = { if (selected == n) selected = null }) { exportAsk = null }
     }
     // Swipe a downloaded run left → confirm → delete the phone's copy.
     var deleteAsk by remember { mutableStateOf<Int?>(null) }
@@ -235,7 +236,8 @@ fun BrowseDownloadsScreen(modifier: Modifier) {
     var settingsOpen by remember { mutableStateOf(false) }
     var exportAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
     var deleteAsk by remember { mutableStateOf<Pair<Session, Lap>?>(null) }
-    exportAsk?.let { (s, l) -> ExportDialog(l, null, s, ctl, layout, showOverlay, padStart, padEnd) { exportAsk = null } }
+    exportAsk?.let { (s, l) -> ExportDialog(l, null, s, ctl, layout, showOverlay, padStart, padEnd,
+        onRemoved = { if (selected == key(s, l)) selected = null; reload++ }) { exportAsk = null } }
     deleteAsk?.let { (s, l) ->
         val mb = ctl.clipFile(s, l.clip!!).length() / 1_000_000
         androidx.compose.material3.AlertDialog(
@@ -376,7 +378,19 @@ private fun RunRow(r: Lap, best: Boolean, selected: Boolean, thumb: androidx.com
  */
 @Composable
 private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: SessionController, layout: OverlayLayout?, overlayDefault: Boolean,
-                         padStartS: Int, padEndS: Int, onDismiss: () -> Unit) {
+                         padStartS: Int, padEndS: Int, onRemoved: () -> Unit = {}, onDismiss: () -> Unit) {
+    var removeAsk by remember { mutableStateOf(false) }
+    if (removeAsk) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { removeAsk = false },
+            title = { Text("Remove this clip from run ${lap.n}?") },
+            text = { Text("Unlinks ${lap.clip} from the run (and deletes the phone's copy, if any), so it's not listed here " +
+                "and won't be matched again. The run keeps its timing data; the clip stays on the camera.") },
+            confirmButton = { TextButton(onClick = { ctl.removeClipFromSession(lap.n, s); removeAsk = false; onRemoved(); onDismiss() }) {
+                Text("Remove", color = Color(0xFFE53935)) } },
+            dismissButton = { TextButton(onClick = { removeAsk = false }) { Text("Cancel") } },
+        )
+    }
     val context = LocalContext.current
     val exporter = remember { com.lunk333.whrrah.export.ClipExporter.get(context) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -390,7 +404,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!exporter.running) onDismiss() },
-        title = { Text("Export run ${lap.n}") },
+        title = { Text(if (started) "Export run ${lap.n}" else "Run ${lap.n}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (!started) {
@@ -410,6 +424,8 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
                         style = MaterialTheme.typography.bodySmall)
                     if (lap.videoStartMs == null && videoStartMs != null && withOverlay)
                         Text("Not gyro-synced: the overlay timing is approximate.", style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    TextButton(onClick = { removeAsk = true }) { Text("Remove clip from session…", color = Color(0xFFE53935)) }
                 } else {
                     Text(exporter.status)
                     if (exporter.running) {

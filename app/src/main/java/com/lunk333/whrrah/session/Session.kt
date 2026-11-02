@@ -221,6 +221,8 @@ data class Session(
     val trackWalkFile: String? = null,
     /** Camera clock − phone clock, found when clips were matched (null until then). */
     val cameraClockOffsetMs: Long? = null,
+    /** Clips taken out of the session by hand (test clips etc.): never matched to a run again. */
+    val removedClips: List<String> = emptyList(),
 ) {
     val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
     /** Best time with cone penalties, DNFs left out. */
@@ -235,6 +237,7 @@ data class Session(
         .put("createdMs", createdMs)
         .putOpt("start", start?.toJson()).putOpt("finish", finish?.toJson()).putOpt("trackWalkFile", trackWalkFile)
         .putOpt("cameraClockOffsetMs", cameraClockOffsetMs)
+        .put("removedClips", JSONArray(removedClips))
         .put("laps", JSONArray().apply { laps.forEach { put(it.toJson()) } })
 
     companion object {
@@ -249,6 +252,7 @@ data class Session(
             finish = TrackLine.fromJson(o.optJSONObject("finish")),
             trackWalkFile = o.optStringOrNull("trackWalkFile"),
             cameraClockOffsetMs = o.optLongOrNull("cameraClockOffsetMs"),
+            removedClips = o.optJSONArray("removedClips")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList(),
             laps = o.optJSONArray("laps")?.let { a -> List(a.length()) { Lap.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
 

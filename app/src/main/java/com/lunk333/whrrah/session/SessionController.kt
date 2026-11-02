@@ -282,7 +282,7 @@ class SessionController private constructor(context: Context) {
         val taken = s.laps.mapNotNull { it.clip }.toSet()
         val runs = s.laps.filter { !it.recording && it.clip == null && it.expectsClip }
             .map { ClipMatcher.RunSpan(it.n, it.recStartWallMs, it.recStopWallMs!!) }
-        val clips = videos.filter { it.name !in taken }
+        val clips = videos.filter { it.name !in taken && it.name !in s.removedClips }
             .mapNotNull { f -> clipStartMs(f)?.let { ClipMatcher.ClipSpan(f.name, it, f.durationSec) } }
         val result = ClipMatcher.match(runs, clips, knownOffsetMs = clockConsensus(s)?.first)
         if (result != null) {
@@ -772,6 +772,29 @@ class SessionController private constructor(context: Context) {
 
     /** Current position + travel direction, for the track sketch. */
     val currentFix: GpsFix? get() = gps.lastFix
+
+    /**
+     * Take run [n]'s clip out of [inSession] (a test clip, the wrong clip…): the run keeps its data but
+     * loses the clip, its sync and gyro, and the phone's copy; the clip is never matched again.
+     * The clip itself stays on the camera.
+     */
+    fun removeClipFromSession(n: Int, inSession: Session) {
+        val open = session?.takeIf { it.id == inSession.id }
+        val s = open ?: inSession
+        val lap = s.laps.firstOrNull { it.n == n } ?: return
+        val clip = lap.clip ?: return
+        if (clip in downloads) { activity = "Run $n's clip is still downloading"; return }
+        runCatching { clipFile(s, clip).delete(); java.io.File(clipFile(s, clip).path + ".part").delete() }
+        runCatching { File(store.dir(s.id), "video/thumbs/" + clip.substringBeforeLast('.') + ".jpg").delete() }
+        lap.gyroFile?.let { runCatching { File(store.gyroDir(s.id), it).delete() } }
+        val updated = s.copy(removedClips = (s.removedClips + clip).distinct(), laps = s.laps.map { l ->
+            if (l.n != n) l else l.copy(clip = null, clipStartMs = null, clipDurationS = null, clipOffsetMs = null,
+                gyroFile = null, gyroSamples = null, videoStartMs = null, syncOffsetMs = null, syncR = null)
+        })
+        if (open != null) update(updated) else store.save(updated)
+        downloadsDone++
+        activity = "Removed $clip from run $n — it won't be matched again"
+    }
 
     /** The run menu's edits: who drove it, DNF, cones hit, official time. */
     fun updateRunInfo(n: Int, driver: String?, dnf: Boolean, cones: Int, officialTimeMs: Long?) {

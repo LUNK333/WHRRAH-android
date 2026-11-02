@@ -145,10 +145,11 @@ class SessionController private constructor(context: Context) {
         }).also { store.save(it) }
         loadWalkPath(s)
         dropInconsistentClips()
-        retimeAll()
-        // Sync any run that has both the clip's gyro and RaceBox data but no sync yet.
-        session?.laps?.filter { it.gyroFile != null && it.imuFile != null && it.videoStartMs == null }?.forEach { syncRun(it.n) }
         activity = "Session open — folder ${s.id}"
+        retimeAll {
+            // Sync any run that has both the clip's gyro and RaceBox data but no sync yet.
+            session?.laps?.filter { it.gyroFile != null && it.imuFile != null && it.videoStartMs == null }?.forEach { syncRun(it.n) }
+        }
         com.lunk333.whrrah.LinkService.update(app)
         main.post(autoConnect)
     }
@@ -166,30 +167,65 @@ class SessionController private constructor(context: Context) {
 
     /** Times [lap] from its logs (GPS + RaceBox motion for the launch) with the session's start distance and [offsetMs]. */
     private fun rawTiming(s: Session, lap: Lap, offsetMs: Long): LapTimer.Result {
-        val fixes = lap.gpsFile?.let { LapTimer.readGpsCsv(File(store.gpsDir(s.id), it)) } ?: emptyList()
-        val imu = lap.imuFile?.let { LapTimer.readImuCsv(File(store.imuDir(s.id), it)) } ?: emptyList()
+        val fixes = lap.gpsFile?.let { cachedLog(File(store.gpsDir(s.id), it), LapTimer::readGpsCsv) } ?: emptyList()
+        val imu = lap.imuFile?.let { cachedLog(File(store.imuDir(s.id), it), LapTimer::readImuCsv) } ?: emptyList()
         return LapTimer.time(fixes, s.start, s.finish, imu, s.startDistanceM, offsetMs)
     }
+
+    /**
+     * Parsed run logs, kept in memory (keyed by path + size + time, so a log still being written is
+     * read afresh): re-timing a session after a line change doesn't re-read every file from storage.
+     */
+    private val logCache = object : LinkedHashMap<String, List<*>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<*>>?) = size > 120
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> cachedLog(f: File, read: (File) -> List<T>): List<T> {
+        val key = "${f.path}|${f.length()}|${f.lastModified()}"
+        synchronized(logCache) { logCache[key]?.let { return it as List<T> } }
+        val v = read(f)
+        synchronized(logCache) { logCache[key] = v }
+        return v
+    }
+
+    /** Re-timing / calibrating in the background: what's happening, for a spinner (null = idle). */
+    var busy by mutableStateOf<String?>(null); private set
+    private val timingExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+    /** Bumped by every re-time: only the latest one's results are applied. */
+    private var retimeGen = 0
 
     /**
      * Fit the timing offset to the official times entered on runs (long-press a run): the mean of
      * official − app, leaving out any run more than 0.5 s off the rest (a typo, a rerun). Re-times
      * every run. Returns what it did, for the screen.
      */
-    fun calibrateToOfficial(): String {
-        val s = session ?: return "No session open"
-        val pairs = s.laps.filter { it.officialTimeMs != null && !it.recording }.mapNotNull { lap ->
-            rawTiming(s, lap, 0).lapTimeMs?.let { lap.n to (lap.officialTimeMs!! - it) }
+    fun calibrateToOfficial(onResult: (String) -> Unit) {
+        val s = session ?: return onResult("No session open")
+        busy = "Calibrating to official times…"
+        timingExec.execute {
+            val pairs = s.laps.filter { it.officialTimeMs != null && !it.recording }.mapNotNull { lap ->
+                runCatching { rawTiming(s, lap, 0) }.getOrNull()?.lapTimeMs?.let { lap.n to (lap.officialTimeMs!! - it) }
+            }
+            main.post {
+                busy = null
+                if (pairs.isEmpty()) return@post onResult("Enter official times on a few timed runs first (long-press a run)")
+                val cur = session?.takeIf { it.id == s.id } ?: return@post
+                val msg = calibrationResult(pairs)
+                update(cur.copy(timingOffsetMs = msg.first))
+                retimeAll { onResult(msg.second) }
+            }
         }
-        if (pairs.isEmpty()) return "Enter official times on a few timed runs first (long-press a run)"
+    }
+
+    /** The offset and the message, from (run, official − app) pairs. */
+    private fun calibrationResult(pairs: List<Pair<Int, Long>>): Pair<Long, String> {
         val median = pairs.map { it.second }.sorted()[pairs.size / 2]
         val kept = pairs.filter { kotlin.math.abs(it.second - median) <= 500 }
         val left = pairs - kept.toSet()
         val off = Math.round(kept.map { it.second }.average())
         val spread = kept.maxOf { kotlin.math.abs(it.second - off) }
-        update(s.copy(timingOffsetMs = off))
-        retimeAll()
-        return "Calibrated from ${kept.size} official time${if (kept.size == 1) "" else "s"}: %+.3f s, runs agree within ±%.3f s".format(off / 1000.0, spread / 1000.0) +
+        return off to "Calibrated from ${kept.size} official time${if (kept.size == 1) "" else "s"}: %+.3f s, runs agree within ±%.3f s".format(off / 1000.0, spread / 1000.0) +
             (if (left.isNotEmpty()) " (left out run " + left.joinToString { "${it.first}" } + ": %+.2f s off — typo?".format((left.first().second - off) / 1000.0) + ")" else "")
     }
 
@@ -208,12 +244,28 @@ class SessionController private constructor(context: Context) {
     }
 
     /** Re-time every finished run (after a line is set or nudged, or when the session opens). */
-    fun retimeAll() {
-        val s = session ?: return
-        if (!s.trackDefined) return
-        s.laps.filter { !it.recording }.forEach { timeRun(it.n) }
-        val timed = session?.laps?.count { it.lapTimeMs != null } ?: 0
-        if (s.laps.isNotEmpty()) activity = "Re-timed ${s.laps.count { !it.recording }} runs — $timed have times"
+    fun retimeAll(onDone: (() -> Unit)? = null) {
+        val s = session ?: return onDone?.invoke() ?: Unit
+        if (!s.trackDefined) return onDone?.invoke() ?: Unit
+        val laps = s.laps.filter { !it.recording }
+        val gen = ++retimeGen
+        busy = "Re-timing ${laps.size} runs…"
+        // Off the main thread (reading every run's logs takes a few seconds on the phone), applied in one update.
+        timingExec.execute {
+            val results = laps.associate { it.n to runCatching { rawTiming(s, it, s.timingOffsetMs) }.getOrNull() }
+            main.post {
+                if (gen != retimeGen) return@post          // a newer re-time is on its way
+                busy = null
+                val cur = session?.takeIf { it.id == s.id } ?: return@post
+                update(cur.copy(laps = cur.laps.map { l ->
+                    val r = results[l.n] ?: return@map l
+                    if (l.recording) l else l.copy(lapTimeMs = r.lapTimeMs, startCrossMs = r.startMs, finishCrossMs = r.finishMs, timingNote = r.note)
+                }))
+                val timed = session?.laps?.count { it.lapTimeMs != null } ?: 0
+                if (laps.isNotEmpty()) activity = "Re-timed ${laps.size} runs — $timed have times"
+                onDone?.invoke()
+            }
+        }
     }
 
     /** Wall-clock time of the last fix in a run's GPS log (its utc_ms column), if it has any. */

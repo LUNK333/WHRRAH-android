@@ -351,6 +351,13 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
         item {
             Column(Modifier.padding(top = 8.dp)) {
                 Text("${s.date} · ${s.driver.ifBlank { "?" }} · ${s.car.ifBlank { "?" }}", style = MaterialTheme.typography.bodyMedium)
+                // Re-timing / calibrating runs in the background: say so (the times update when it's done).
+                ctl.busy?.let { what ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Text(what, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
             }
         }
         if (ctl.camera.problems.isNotEmpty()) item { CameraSetupWarning(ctl.camera) }
@@ -500,7 +507,7 @@ private fun TimingCalibration(ctl: SessionController, s: Session) {
             (if (s.timingOffsetMs != 0L) " · calibrated %+.3f s".format(s.timingOffsetMs / 1000.0) else " · not calibrated"),
             style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { msg = ctl.calibrateToOfficial() }, enabled = n > 0) {
+            OutlinedButton(onClick = { msg = null; ctl.calibrateToOfficial { msg = it } }, enabled = n > 0 && ctl.busy == null) {
                 Text(if (n > 0) "Calibrate to $n official time${if (n == 1) "" else "s"}" else "Calibrate (enter official times first)")
             }
             if (s.timingOffsetMs != 0L) TextButton(onClick = { ctl.resetCalibration(); msg = "Calibration cleared" }) { Text("Clear") }

@@ -60,7 +60,7 @@ fun OverlayPreviewScreen(modifier: Modifier) {
         value = run?.let { (s, lap) ->
             withContext(Dispatchers.IO) {
                 RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                    lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs })
+                    lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs }, s.timingOffsetMs)
             }
         }
     }

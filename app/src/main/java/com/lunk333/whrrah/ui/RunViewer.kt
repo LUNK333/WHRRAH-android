@@ -447,7 +447,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
                             val data = withContext(Dispatchers.IO) {
                                 runCatching {
                                     RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                                        lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs })
+                                        lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs }, s.timingOffsetMs)
                                 }.getOrNull()
                             }
                             com.lunk333.whrrah.export.ClipExporter.Overlay(layout, data, videoStartMs)
@@ -616,7 +616,7 @@ private fun RunPlayer(
         value = withContext(Dispatchers.IO) {
             runCatching {
                 RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                    lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs })
+                    lap.startCrossMs, lap.finishCrossMs, s.runNo(lap), s.laps.filter { it.n < lap.n && s.driverOf(it) == s.driverOf(lap) }.mapNotNull { it.effectiveTimeMs }, s.timingOffsetMs)
             }.getOrNull()
         }
     }
@@ -723,8 +723,9 @@ private fun RunPlayer(
             // Lap time over the video, tied to the playback position (synced runs only).
             if (synced && layout == null) {
                 val t = lap.videoStartMs!! + shownMs
-                val lapMs = lap.finishCrossMs!! - lap.startCrossMs!!
-                val elapsed = (t - lap.startCrossMs).coerceIn(0, lapMs)
+                // The saved lap time (it includes the calibration), counted up to the finish.
+                val lapMs = lap.lapTimeMs ?: (lap.finishCrossMs!! - lap.startCrossMs!!)
+                val elapsed = (t - (lap.finishCrossMs!! - lapMs)).coerceIn(0, lapMs)
                 Text(
                     fmtLap(elapsed), color = if (t >= lap.finishCrossMs) Color(0xFF7CFC00) else Color.White,
                     fontSize = 28.sp, fontWeight = FontWeight.Bold,

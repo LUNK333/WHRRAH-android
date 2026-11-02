@@ -82,4 +82,13 @@ class RunDataTest {
         assertEquals(0.1, d.valueAt("InlineAcc", t0 / 1000.0 + 0.4), 1e-6)
         assertEquals(3.0, d.valueAt("YawRate", t0 / 1000.0 + 1), 1e-9)
     }
+
+    @Test
+    fun theTimingCalibrationIsInTheOverlayTime() {
+        val gps = gpsLog(500) { t -> doubleArrayOf(42.0 + t * 10 / 111_000.0, -71.0, 10.0, 0.0) }
+        // Run timed 5 s → 15 s, calibrated −57 ms: the overlay shows the saved 9.943 at the finish.
+        val d = RunData.load(gps, null, t0 + 5_000, t0 + 15_000, 1, emptyList(), offsetMs = -57)
+        assertEquals(9.943, d.lapTimeAt(t0 / 1000.0 + 19)!!, 1e-6)
+        assertEquals(3.0 - 0.057, d.lapTimeAt(t0 / 1000.0 + 8)!!, 1e-6)
+    }
 }

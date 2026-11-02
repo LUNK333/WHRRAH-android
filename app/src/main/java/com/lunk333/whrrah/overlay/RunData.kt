@@ -130,7 +130,12 @@ class RunData(
          * and optionally [imu] (`elapsed_ms,wall_ms,utc_ms,g_x,g_y,g_z,roll_dps,pitch_dps,yaw_dps`).
          * Times in ms on the data clock.
          */
-        fun load(gps: File?, imu: File?, startMs: Long?, finishMs: Long?, runNumber: Int, earlierLapsMs: List<Long>): RunData {
+        /**
+         * [offsetMs]: the session's timing calibration (added to every lap time). It's applied by
+         * starting the clock that much earlier, so the running time and the time at the finish both
+         * match the run's saved time.
+         */
+        fun load(gps: File?, imu: File?, startMs: Long?, finishMs: Long?, runNumber: Int, earlierLapsMs: List<Long>, offsetMs: Long = 0): RunData {
             val rows = gps?.takeIf { it.isFile }?.useLines { ls ->
                 ls.drop(1).mapNotNull { l ->
                     val c = l.split(',')
@@ -157,7 +162,7 @@ class RunData(
                 val (lonG, latG) = gpsAccel(ts, speed, heading)
                 ch[LON_ACC] = lonG; ch[LAT_ACC] = latG
             }
-            val data = RunData(ts, ch, startMs?.div(1000.0), finishMs?.div(1000.0), runNumber, earlierLapsMs.map { it / 1000.0 })
+            val data = RunData(ts, ch, startMs?.let { (it - offsetMs) / 1000.0 }, finishMs?.div(1000.0), runNumber, earlierLapsMs.map { it / 1000.0 })
             return if (imu != null && imu.isFile && ts.isNotEmpty()) data.withImu(imu) else data
         }
 

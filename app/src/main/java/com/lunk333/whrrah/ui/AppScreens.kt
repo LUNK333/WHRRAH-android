@@ -697,7 +697,7 @@ private fun LapRow(lap: Lap, s: Session, onLongPress: () -> Unit) {
     }) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Run ${lap.n}" + (lap.driver?.takeIf { it != s.driver }?.let { " · $it" } ?: "") +
+                Text("Run ${lap.n}" + ((lap.driver ?: s.driver).takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
                     if (lap.recording) "  ● recording" else "", style = MaterialTheme.typography.titleMedium)
                 Column(horizontalAlignment = Alignment.End) {
                     Text(if (lap.dnf) "DNF" else formatLap(lap.effectiveTimeMs ?: lap.lapTimeMs),

@@ -93,6 +93,7 @@ data class RaceBoxData(
     val fixType: Int,
     /** Bit 0 of the fix flags: the receiver considers the solution good. */
     val fixOk: Boolean,
+    /** u-blox headVehValid: vehicle heading (sensor fusion) — never set on the RaceBox Mini; not the heading of motion. */
     val headingValid: Boolean,
     val satellites: Int,
     val lat: Double,

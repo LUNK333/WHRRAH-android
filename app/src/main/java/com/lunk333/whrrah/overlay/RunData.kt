@@ -149,7 +149,10 @@ class RunData(
                 ch[LON] = DoubleArray(rows.size) { rows[it][3] }
                 val speed = DoubleArray(rows.size) { rows[it][4].takeUnless(Double::isNaN) ?: 0.0 }
                 ch[SPEED] = DoubleArray(rows.size) { speed[it] * MPH_PER_MPS }
-                val heading = fillHeading(DoubleArray(rows.size) { rows[it][5] })
+                // Logs from before the RaceBox heading was kept have none: work it out from the track.
+                val logged = DoubleArray(rows.size) { rows[it][5] }
+                val heading = fillHeading(if (logged.count { !it.isNaN() } > rows.size / 10) logged
+                    else trackHeading(DoubleArray(rows.size) { rows[it][2] }, DoubleArray(rows.size) { rows[it][3] }, speed))
                 ch[HEADING] = heading
                 val (lonG, latG) = gpsAccel(ts, speed, heading)
                 ch[LON_ACC] = lonG; ch[LAT_ACC] = latG
@@ -175,6 +178,22 @@ class RunData(
                 ch[name] = DoubleArray(timestamps.size) { src.valueAt(name, timestamps[it]) }
             }
             return RunData(timestamps, ch, startS, finishS, runNumber, earlierLapsS)
+        }
+
+        /**
+         * Direction of travel from the positions themselves (bearing from 3 fixes back to 3 ahead),
+         * where the car is moving at least [MIN_TURN_SPEED_MPS]; NaN elsewhere.
+         */
+        internal fun trackHeading(lat: DoubleArray, lon: DoubleArray, speedMps: DoubleArray): DoubleArray {
+            val n = lat.size
+            return DoubleArray(n) { i ->
+                val a = maxOf(0, i - 3); val b = minOf(n - 1, i + 3)
+                if (b <= a || speedMps[i] < MIN_TURN_SPEED_MPS) Double.NaN else {
+                    val y = (lat[b] - lat[a]) * 111_320.0
+                    val x = (lon[b] - lon[a]) * 111_320.0 * kotlin.math.cos(Math.toRadians(lat[i]))
+                    if (x * x + y * y < 0.25) Double.NaN else (Math.toDegrees(kotlin.math.atan2(x, y)) + 360) % 360
+                }
+            }
         }
 
         /** The RaceBox leaves heading blank when stationary: carry the last known one (else 0). */

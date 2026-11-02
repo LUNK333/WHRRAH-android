@@ -223,7 +223,10 @@ class RaceBox private constructor(private val context: Context) : GpsSource {
             if (state == State.CONNECTED && status.startsWith("Connected")) status = "Streaming"
             if (d.latLonValid && d.fixType >= 2) {
                 val fix = GpsFix(elapsed, d.utcMs, d.lat, d.lon, d.speedMps.toFloat(),
-                    if (d.headingValid) d.headingDeg.toFloat() else null, d.hAccM.toFloat())
+                    // Heading of motion is always sent; it's only meaningful while moving. (The "heading
+                    // valid" flag is the u-blox vehicle-heading flag — sensor fusion the Mini doesn't do —
+                    // so it's never set and must not gate this.)
+                    if (d.speedMps > MIN_HEADING_SPEED_MPS) d.headingDeg.toFloat() else null, d.hAccM.toFloat())
                 lastFix = fix
                 onFix?.invoke(fix)
             }
@@ -340,6 +343,8 @@ class RaceBox private constructor(private val context: Context) : GpsSource {
     }
 
     companion object {
+        /** Below this the heading of motion is noise. */
+        const val MIN_HEADING_SPEED_MPS = 0.5
         val UART: UUID = UUID.fromString("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         val RX: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
         val TX: UUID = UUID.fromString("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")

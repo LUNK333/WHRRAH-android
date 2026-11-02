@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Checkbox
+import com.lunk333.whrrah.session.CONE_PENALTY_MS
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -316,6 +318,14 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
 
     // Long-press a run → confirm → delete it.
     var deleteAsk by remember { mutableStateOf<Int?>(null) }
+    // Long-press a run → its menu (driver, DNF, cones, official time, delete).
+    var menuFor by remember { mutableStateOf<Int?>(null) }
+    menuFor?.let { n ->
+        val lap = s.laps.firstOrNull { it.n == n }
+        if (lap == null) menuFor = null
+        else RunMenu(lap, s, onSave = { d, dnf, cones, off -> ctl.updateRunInfo(n, d, dnf, cones, off); menuFor = null },
+            onDelete = { menuFor = null; deleteAsk = n }, onDismiss = { menuFor = null })
+    }
     deleteAsk?.let { n ->
         val lap = s.laps.firstOrNull { it.n == n }
         androidx.compose.material3.AlertDialog(
@@ -361,7 +371,7 @@ private fun SessionScreen(modifier: Modifier, onViewRuns: () -> Unit, header: @C
             Text("Start recording from the mic remote ~30 s before the start line and stop ~30 s after the finish — each recording is one run.",
                 style = MaterialTheme.typography.bodySmall)
         }
-        items(s.laps.reversed(), key = { it.n }) { lap -> LapRow(lap, onLongPress = { deleteAsk = lap.n }) }
+        items(s.laps.reversed(), key = { it.n }) { lap -> LapRow(lap, s, onLongPress = { menuFor = lap.n }) }
 
         item {
             Button(onClick = onViewRuns, enabled = !ctl.matching && ctl.currentRun == null && link.lastCamera != null,
@@ -561,6 +571,77 @@ private fun LineButton(label: String, l: TrackLine?, color: Color, canSet: Boole
 }
 
 /**
+ * Long-press menu for a run: who drove it, DNF, cones hit (2 s each), and the official time (raw, from
+ * the timing system — shown against the app's own time to spot a start/finish line that's off).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RunMenu(lap: Lap, s: Session, onSave: (driver: String?, dnf: Boolean, cones: Int, officialMs: Long?) -> Unit,
+                    onDelete: () -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val drivers = remember { (listOf(s.driver) + AppSettings.get(context).drivers).filter { it.isNotBlank() }.distinct() }
+    var driver by remember { mutableStateOf(lap.driver ?: s.driver) }
+    var dnf by remember { mutableStateOf(lap.dnf) }
+    var cones by remember { mutableStateOf(lap.cones) }
+    var official by remember { mutableStateOf(lap.officialTimeMs?.let { formatLap(it) } ?: "") }
+    val officialMs = parseRunTime(official)
+    val officialBad = official.isNotBlank() && officialMs == null
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Run ${lap.n}" + (lap.lapTimeMs?.let { " · ${formatLap(it)}" } ?: "")) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Driver", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    drivers.forEach { d ->
+                        androidx.compose.material3.FilterChip(selected = driver == d, onClick = { driver = d }, label = { Text(d) })
+                    }
+                }
+                if (drivers.size < 2) Text("Add a co-driver in Settings → Drivers to pick them here.", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(dnf, { dnf = it })
+                    Column {
+                        Text("DNF / off course")
+                        Text("Not counted for best or used for the delta", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Cones", Modifier.weight(1f))
+                    OutlinedButton(onClick = { cones = (cones - 1).coerceAtLeast(0) }, enabled = cones > 0) { Text("−") }
+                    Text("$cones", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(onClick = { cones++ }) { Text("+") }
+                }
+                if (cones > 0) Text("+${cones * 2} s" + (lap.lapTimeMs?.let { " → ${formatLap(it + cones * CONE_PENALTY_MS)}" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(value = official, onValueChange = { official = it }, singleLine = true,
+                    label = { Text("Official time (raw, e.g. 45.123 or 1:05.123)") }, isError = officialBad,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal))
+                if (officialMs != null && lap.lapTimeMs != null) {
+                    val d = officialMs - lap.lapTimeMs
+                    Text("App's time is %.3f s %s than official".format(kotlin.math.abs(d) / 1000.0, if (d > 0) "shorter" else "longer") +
+                        (s.officialDiffMeanMs?.let { " · session average %+.3f s".format(it / 1000.0) } ?: ""),
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = onDelete, enabled = !lap.recording) { Text("Delete run…", color = Color(0xFFE53935)) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(driver.takeIf { it != s.driver && it.isNotBlank() }, dnf, cones, if (official.isBlank()) null else officialMs) },
+                enabled = !officialBad) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** "45.123", "1:05.123" or "1:05" → ms; null if it doesn't parse. */
+private fun parseRunTime(t: String): Long? {
+    val m = Regex("""^\s*(?:(\d+):)?(\d+(?:\.\d{1,3})?)\s*$""").matchEntire(t) ?: return null
+    val min = m.groupValues[1].toLongOrNull() ?: 0
+    val sec = m.groupValues[2].toDoubleOrNull() ?: return null
+    return min * 60_000 + Math.round(sec * 1000)
+}
+
+/**
  * Top-down sketch (north up): start line green, finish red, each with an arrow for the driving
  * direction, and the current position as a dot. Scaled to fit; just a sanity check on the walk.
  */
@@ -608,7 +689,7 @@ private fun TrackSketch(start: TrackLine?, finish: TrackLine?, walk: List<Geo.La
 }
 
 @Composable
-private fun LapRow(lap: Lap, onLongPress: () -> Unit) {
+private fun LapRow(lap: Lap, s: Session, onLongPress: () -> Unit) {
     val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Card(Modifier.fillMaxWidth().pointerInput(lap.n) {
@@ -616,9 +697,19 @@ private fun LapRow(lap: Lap, onLongPress: () -> Unit) {
     }) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Run ${lap.n}" + if (lap.recording) "  ● recording" else "",
-                    style = MaterialTheme.typography.titleMedium)
-                Text(formatLap(lap.lapTimeMs), style = MaterialTheme.typography.titleMedium)
+                Text("Run ${lap.n}" + (lap.driver?.takeIf { it != s.driver }?.let { " · $it" } ?: "") +
+                    if (lap.recording) "  ● recording" else "", style = MaterialTheme.typography.titleMedium)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(if (lap.dnf) "DNF" else formatLap(lap.effectiveTimeMs ?: lap.lapTimeMs),
+                        style = MaterialTheme.typography.titleMedium, color = if (lap.dnf) Color(0xFFE53935) else Color.Unspecified)
+                    // Raw + cones, and the official time with the difference.
+                    val extras = listOfNotNull(
+                        if (lap.cones > 0 && lap.lapTimeMs != null) "${formatLap(lap.lapTimeMs)} +${lap.cones}×2 s" else null,
+                        if (lap.dnf && lap.lapTimeMs != null) "(${formatLap(lap.lapTimeMs)})" else null,
+                        lap.officialTimeMs?.let { o -> "official ${formatLap(o)}" + (lap.officialDiffMs?.let { " (%+.3f)".format(it / 1000.0) } ?: "") },
+                    )
+                    if (extras.isNotEmpty()) Text(extras.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                }
             }
             val recLen = lap.recStopWallMs?.let { "%d s".format((it - lap.recStartWallMs) / 1000) }
             Text(listOfNotNull(fmt.format(Date(lap.recStartWallMs)), recLen?.let { "rec $it" },
@@ -805,7 +896,8 @@ private fun lapTimerState(ctl: SessionController, s: Session): Triple<Long?, Str
         live -> Triple((now - start!!).toLong().coerceAtLeast(0), "Run ${run!!.n} · on course", Color(0xFFE53935))
         run != null -> Triple(0L, "Run ${run.n} · waiting for the start line", MaterialTheme.colorScheme.onSurface)
         last != null -> Triple(last.lapTimeMs, "Run ${last.n}" + (if (last.lapTimeMs == null) " · no time" else "") +
-            (if (last.lapTimeMs != null && last.lapTimeMs == s.bestLapMs) " · best" else ""), MaterialTheme.colorScheme.onSurface)
+            (if (last.dnf) " · DNF" else "") + (if (last.cones > 0) " · +${last.cones} cone${if (last.cones > 1) "s" else ""}" else "") +
+            (if (last.effectiveTimeMs != null && last.effectiveTimeMs == s.bestLapMs) " · best" else ""), MaterialTheme.colorScheme.onSurface)
         else -> Triple(0L, "No runs yet", MaterialTheme.colorScheme.onSurface)
     }
 }

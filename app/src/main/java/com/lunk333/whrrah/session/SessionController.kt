@@ -625,7 +625,8 @@ class SessionController private constructor(context: Context) {
         val st = s.start ?: return
         val proj = LocalProjector(st.lat, st.lon)
         var ref: ReferenceLap? = null
-        for (lap in s.laps.filter { it.lapTimeMs != null && it.startCrossMs != null && it.finishCrossMs != null && it.gpsFile != null }.sortedBy { it.lapTimeMs }) {
+        // DNFs never; cones don't matter here (the line through the course is what's compared).
+        for (lap in s.laps.filter { !it.dnf && it.lapTimeMs != null && it.startCrossMs != null && it.finishCrossMs != null && it.gpsFile != null }.sortedBy { it.lapTimeMs }) {
             val key = "${s.id}/${lap.n}/${lap.startCrossMs}/${lap.finishCrossMs}/${st.lat},${st.lon}"
             val r = deltaRefCache?.takeIf { it.first == key }?.second ?: runCatching {
                 ReferenceLap.build(LapTimer.readGpsCsv(File(store.gpsDir(s.id), lap.gpsFile!!)), lap.startCrossMs!!.toDouble(), lap.finishCrossMs!!.toDouble(), proj)
@@ -771,6 +772,11 @@ class SessionController private constructor(context: Context) {
 
     /** Current position + travel direction, for the track sketch. */
     val currentFix: GpsFix? get() = gps.lastFix
+
+    /** The run menu's edits: who drove it, DNF, cones hit, official time. */
+    fun updateRunInfo(n: Int, driver: String?, dnf: Boolean, cones: Int, officialTimeMs: Long?) {
+        updateLap(n) { it.copy(driver = driver, dnf = dnf, cones = cones.coerceAtLeast(0), officialTimeMs = officialTimeMs) }
+    }
 
     /**
      * Delete a finished run: drops it from the session and deletes its GPS, RaceBox and gyro logs.

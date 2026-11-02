@@ -102,6 +102,9 @@ data class TrackLine(
  * One run through the course. Bounded by the camera's recording (started from the mic remote ~30 s
  * before the start line, stopped ~30 s after the finish). Times are the phone's wall clock.
  */
+/** Autocross cone penalty. */
+const val CONE_PENALTY_MS = 2000L
+
 data class Lap(
     val n: Int,
     val recStartWallMs: Long,
@@ -139,7 +142,21 @@ data class Lap(
     val videoStartMs: Long? = null,
     /** Correlation at the sync peak (0..1; < 0.6 = don't trust it). */
     val syncR: Double? = null,
+    /** Who drove it (co-driving), null = the session's driver. */
+    val driver: String? = null,
+    /** Did not finish / off course: not counted for best, not used as the delta reference. */
+    val dnf: Boolean = false,
+    /** Cones hit, 2 s each. */
+    val cones: Int = 0,
+    /** The official (timing system) run time, raw — without cone penalties. */
+    val officialTimeMs: Long? = null,
 ) {
+    /** The run's time with cone penalties; null for a DNF or an untimed run. */
+    val effectiveTimeMs: Long? get() = if (dnf) null else lapTimeMs?.plus(cones * CONE_PENALTY_MS)
+
+    /** Official − measured (+ = the app's time was short), when both are known. */
+    val officialDiffMs: Long? get() = if (officialTimeMs != null && lapTimeMs != null) officialTimeMs - lapTimeMs else null
+
     /** A clip is expected: the camera recorded it (runs from before this field existed: camera-started ones). */
     val expectsClip: Boolean get() = cameraRecorded || !manual
     val recording: Boolean get() = recStopWallMs == null
@@ -154,6 +171,7 @@ data class Lap(
         .putOpt("clipDurationS", clipDurationS).putOpt("clipOffsetMs", clipOffsetMs)
         .putOpt("startCrossMs", startCrossMs).putOpt("finishCrossMs", finishCrossMs).putOpt("timingNote", timingNote)
         .putOpt("imuFile", imuFile).putOpt("videoStartMs", videoStartMs).putOpt("syncR", syncR)
+        .putOpt("driver", driver).put("dnf", dnf).put("cones", cones).putOpt("officialTimeMs", officialTimeMs)
 
     companion object {
         fun fromJson(o: JSONObject) = Lap(
@@ -179,6 +197,10 @@ data class Lap(
             imuFile = o.optStringOrNull("imuFile"),
             videoStartMs = o.optLongOrNull("videoStartMs"),
             syncR = if (o.has("syncR") && !o.isNull("syncR")) o.getDouble("syncR") else null,
+            driver = o.optStringOrNull("driver"),
+            dnf = o.optBoolean("dnf", false),
+            cones = o.optInt("cones", 0),
+            officialTimeMs = o.optLongOrNull("officialTimeMs"),
         )
     }
 }
@@ -201,7 +223,11 @@ data class Session(
     val cameraClockOffsetMs: Long? = null,
 ) {
     val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
-    val bestLapMs: Long? get() = laps.mapNotNull { it.lapTimeMs }.minOrNull()
+    /** Best time with cone penalties, DNFs left out. */
+    val bestLapMs: Long? get() = laps.mapNotNull { it.effectiveTimeMs }.minOrNull()
+
+    /** Mean official − measured over the runs that have an official time (null without any). */
+    val officialDiffMeanMs: Long? get() = laps.mapNotNull { it.officialDiffMs }.takeIf { it.isNotEmpty() }?.let { d -> d.sum() / d.size }
 
     fun toJson(): JSONObject = JSONObject()
         .put("version", 1)

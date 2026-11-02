@@ -168,7 +168,7 @@ fun RunViewerScreen(modifier: Modifier) {
             }
             items(runs, key = { it.n }) { r ->
                 val onPhone = remember(r.clip, ctl.downloadsDone) { ctl.clipFile(s, r.clip!!).isFile }
-                RunRow(r, best = r.lapTimeMs != null && r.lapTimeMs == s.bestLapMs, selected = r.n == selected,
+                RunRow(r, best = r.effectiveTimeMs != null && r.effectiveTimeMs == s.bestLapMs, selected = r.n == selected,
                     thumb = rememberThumbnail(link, link.files.firstOrNull { it.name == r.clip }, File(ctl.store.dir(s.id), "video/thumbs")),
                     onPhone = onPhone, progress = ctl.downloads[r.clip],
                     onClick = { selected = r.n }, onDownload = { ctl.downloadClip(r.n) }, onDelete = { deleteAsk = r.n },
@@ -268,7 +268,7 @@ fun BrowseDownloadsScreen(modifier: Modifier) {
                     style = MaterialTheme.typography.bodyMedium)
             }
             items(entries, key = { (s, l) -> key(s, l) }) { (s, l) ->
-                RunRow(l, best = l.lapTimeMs != null && l.lapTimeMs == s.bestLapMs, selected = key(s, l) == selected,
+                RunRow(l, best = l.effectiveTimeMs != null && l.effectiveTimeMs == s.bestLapMs, selected = key(s, l) == selected,
                     thumb = rememberLocalThumbnail(ctl.clipFile(s, l.clip!!), File(ctl.store.dir(s.id), "video/thumbs")),
                     onPhone = true, progress = null, title = "${s.event}, Run ${l.n}", allowDownload = false,
                     onClick = { selected = key(s, l) }, onDownload = {}, onDelete = { deleteAsk = s to l },
@@ -430,7 +430,7 @@ private fun ExportDialog(lap: Lap, remote: CameraFile?, s: Session, ctl: Session
                             val data = withContext(Dispatchers.IO) {
                                 runCatching {
                                     RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                                        lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.lapTimeMs })
+                                        lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.effectiveTimeMs })
                                 }.getOrNull()
                             }
                             com.lunk333.whrrah.export.ClipExporter.Overlay(layout, data, videoStartMs)
@@ -599,7 +599,7 @@ private fun RunPlayer(
         value = withContext(Dispatchers.IO) {
             runCatching {
                 RunData.load(lap.gpsFile?.let { File(ctl.store.gpsDir(s.id), it) }, lap.imuFile?.let { File(ctl.store.imuDir(s.id), it) },
-                    lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.lapTimeMs })
+                    lap.startCrossMs, lap.finishCrossMs, lap.n, s.laps.filter { it.n < lap.n }.mapNotNull { it.effectiveTimeMs })
             }.getOrNull()
         }
     }

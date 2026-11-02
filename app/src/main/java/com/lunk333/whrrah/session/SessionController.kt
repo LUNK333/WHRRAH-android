@@ -159,10 +159,52 @@ class SessionController private constructor(context: Context) {
     private fun timeRun(n: Int) {
         val s = session ?: return
         val lap = s.laps.firstOrNull { it.n == n && !it.recording } ?: return
-        val fixes = lap.gpsFile?.let { LapTimer.readGpsCsv(File(store.gpsDir(s.id), it)) } ?: emptyList()
-        val r = LapTimer.time(fixes, s.start, s.finish)
+        val r = rawTiming(s, lap, s.timingOffsetMs)
         updateLap(n) { it.copy(lapTimeMs = r.lapTimeMs, startCrossMs = r.startMs, finishCrossMs = r.finishMs, timingNote = r.note) }
         if (r.lapTimeMs != null) activity = "Run $n: " + com.lunk333.whrrah.settings.TimeFormat.run(r.lapTimeMs)
+    }
+
+    /** Times [lap] from its logs (GPS + RaceBox motion for the launch) with the session's start distance and [offsetMs]. */
+    private fun rawTiming(s: Session, lap: Lap, offsetMs: Long): LapTimer.Result {
+        val fixes = lap.gpsFile?.let { LapTimer.readGpsCsv(File(store.gpsDir(s.id), it)) } ?: emptyList()
+        val imu = lap.imuFile?.let { LapTimer.readImuCsv(File(store.imuDir(s.id), it)) } ?: emptyList()
+        return LapTimer.time(fixes, s.start, s.finish, imu, s.startDistanceM, offsetMs)
+    }
+
+    /**
+     * Fit the timing offset to the official times entered on runs (long-press a run): the mean of
+     * official − app, leaving out any run more than 0.5 s off the rest (a typo, a rerun). Re-times
+     * every run. Returns what it did, for the screen.
+     */
+    fun calibrateToOfficial(): String {
+        val s = session ?: return "No session open"
+        val pairs = s.laps.filter { it.officialTimeMs != null && !it.recording }.mapNotNull { lap ->
+            rawTiming(s, lap, 0).lapTimeMs?.let { lap.n to (lap.officialTimeMs!! - it) }
+        }
+        if (pairs.isEmpty()) return "Enter official times on a few timed runs first (long-press a run)"
+        val median = pairs.map { it.second }.sorted()[pairs.size / 2]
+        val kept = pairs.filter { kotlin.math.abs(it.second - median) <= 500 }
+        val left = pairs - kept.toSet()
+        val off = Math.round(kept.map { it.second }.average())
+        val spread = kept.maxOf { kotlin.math.abs(it.second - off) }
+        update(s.copy(timingOffsetMs = off))
+        retimeAll()
+        return "Calibrated from ${kept.size} official time${if (kept.size == 1) "" else "s"}: %+.3f s, runs agree within ±%.3f s".format(off / 1000.0, spread / 1000.0) +
+            (if (left.isNotEmpty()) " (left out run " + left.joinToString { "${it.first}" } + ": %+.2f s off — typo?".format((left.first().second - off) / 1000.0) + ")" else "")
+    }
+
+    fun resetCalibration() {
+        val s = session ?: return
+        update(s.copy(timingOffsetMs = 0)); retimeAll()
+    }
+
+    /** Change a line's width in place (e.g. a runway-wide finish), keeping where it is. */
+    fun setLineWidth(start: Boolean, widthM: Double) {
+        val s = session ?: return
+        val l = (if (start) s.start else s.finish) ?: return
+        val w = widthM.coerceIn(1.5, 120.0)
+        update(if (start) s.copy(start = l.copy(widthM = w)) else s.copy(finish = l.copy(widthM = w)))
+        retimeAll()
     }
 
     /** Re-time every finished run (after a line is set or nudged, or when the session opens). */
@@ -257,6 +299,7 @@ class SessionController private constructor(context: Context) {
         val lap = Lap(n = (s.laps.maxOfOrNull { it.n } ?: 0) + 1, recStartWallMs = wallMs, manual = manual)
         update(s.copy(laps = s.laps + lap))
         liveStartElapsedMs = null; liveLapMs = null; liveLastFix = null
+        liveStageT = null; liveDist = 0.0; liveRunT = null
         startDelta(s)
         openGpsLog(lap.n)
         activity = "Run ${lap.n} recording — logging ${gps.name}"
@@ -591,20 +634,56 @@ class SessionController private constructor(context: Context) {
     var liveLapMs by mutableStateOf<Long?>(null); private set
     private var liveLastFix: GpsFix? = null
 
+    // Launch-based live start (same rule as LapTimer): receiver time of the last standstill in the
+    // stage, distance covered since, and the start once it reaches the session's start distance.
+    private var liveStageT: Double? = null
+    private var liveDist = 0.0
+    private var liveRunT: Double? = null
+
+    private fun fixT(f: GpsFix) = (if (f.utcMs > 0) f.utcMs else f.elapsedMs).toDouble()
+
     /**
-     * Same crossing rule as [LapTimer], one fix at a time, on the phone's clock (so the display can
-     * tick). Crossing the start again before the finish re-arms it (staging creep). The saved time
-     * from the log replaces this when the run stops.
+     * The live timer, one fix at a time. Start: a stop in the stage (re)arms it — dropping a start
+     * seen while pulling up — and the clock starts once the car has moved the start distance from that
+     * launch; with no stop in the stage, the start line crossing. Finish: the finish line crossing.
+     * The saved time from the log (with the RaceBox accelerometer) replaces this when the run stops.
      */
     private fun liveTiming(fix: GpsFix) {
         val s = session ?: return
         val prev = liveLastFix
         liveLastFix = fix
         if (currentRun == null || prev == null || liveLapMs != null) return
-        val pair = listOf(LapTimer.Fix(prev.elapsedMs, prev.lat, prev.lon), LapTimer.Fix(fix.elapsedMs, fix.lat, fix.lon))
-        s.start?.let { st -> LapTimer.crossings(pair, st).firstOrNull()?.let { liveStartElapsedMs = it.tMs; return } }
-        val start = liveStartElapsedMs ?: return
-        s.finish?.let { fin -> LapTimer.crossings(pair, fin).firstOrNull()?.let { liveLapMs = Math.round(it.tMs - start) } }
+        val st = s.start ?: return
+        val tNow = fixT(fix); val tPrev = fixT(prev)
+        val v = fix.speedMps?.toDouble()
+        if (v != null && v < LapTimer.STOP_MPS && LapTimer.inStage(LapTimer.Fix(tNow.toLong(), fix.lat, fix.lon), st)) {
+            liveStageT = tNow; liveDist = 0.0
+            if (liveRunT != null) { liveRunT = null; liveStartElapsedMs = null; deltaTracker?.disarm() }
+            return
+        }
+        if (liveRunT == null) {
+            val pv = prev.speedMps?.toDouble()
+            if (liveStageT != null && v != null && pv != null) {
+                val ds = (pv + v) / 2 * (tNow - tPrev) / 1000
+                if (liveDist + ds >= s.startDistanceM) {
+                    val k = if (ds > 0) (s.startDistanceM - liveDist) / ds else 1.0
+                    startLive(tPrev + k * (tNow - tPrev), fix)
+                }
+                liveDist += ds
+            } else if (liveStageT == null) {
+                val pair = listOf(LapTimer.Fix(tPrev.toLong(), prev.lat, prev.lon), LapTimer.Fix(tNow.toLong(), fix.lat, fix.lon))
+                LapTimer.crossings(pair, st).firstOrNull()?.let { startLive(it.tMs, fix) }
+            }
+        }
+        val runT = liveRunT ?: return
+        val pair = listOf(LapTimer.Fix(tPrev.toLong(), prev.lat, prev.lon), LapTimer.Fix(tNow.toLong(), fix.lat, fix.lon))
+        s.finish?.let { fin -> LapTimer.crossings(pair, fin).firstOrNull()?.let { liveLapMs = Math.round(it.tMs - runT) + s.timingOffsetMs } }
+    }
+
+    private fun startLive(tStart: Double, fix: GpsFix) {
+        liveRunT = tStart
+        liveStartElapsedMs = fix.elapsedMs - (fixT(fix) - tStart)   // the display ticks on the phone's clock
+        deltaTracker?.startAt(tStart)
     }
 
     // ---- live delta -----------------------------------------------------------------------------
@@ -633,7 +712,8 @@ class SessionController private constructor(context: Context) {
             }.getOrNull()?.also { deltaRefCache = key to it }
             if (r != null && r.valid) { ref = r; deltaRefRun = lap.n; break }
         }
-        deltaTracker = DeltaTracker(ref, proj, s.start, s.finish)
+        // Started by the controller (launch-based), finished by the tracker at the finish line.
+        deltaTracker = DeltaTracker(ref, proj, null, s.finish)
     }
 
     private fun liveDeltaFix(fix: GpsFix) {
@@ -697,12 +777,13 @@ class SessionController private constructor(context: Context) {
         val fix = gps.lastFix ?: return "No GPS fix yet"
         val est = HeadingEstimator.estimate(recentFixes.toList(), android.os.SystemClock.elapsedRealtime())
             ?: return "Can't tell which way you're going — walk a few steps in the driving direction, then tap again"
-        val line = TrackLine(fix.lat, fix.lon, est.headingDeg, settings.lineWidthFt * Geo.FT, fix.accuracyM, est.how,
+        val widthFt = if (start) settings.lineWidthFt else settings.finishLineWidthFt
+        val line = TrackLine(fix.lat, fix.lon, est.headingDeg, widthFt * Geo.FT, fix.accuracyM, est.how,
             setLat = fix.lat, setLon = fix.lon, setHeadingDeg = est.headingDeg)
         update(if (start) s.copy(start = line) else s.copy(finish = line))
         retimeAll()
         activity = (if (start) "Start" else "Finish") + " line set: %.0f ft wide, facing %.0f° (from %s, ±%.1f m)"
-            .format(settings.lineWidthFt, est.headingDeg, est.how, fix.accuracyM ?: 0f)
+            .format(widthFt, est.headingDeg, est.how, fix.accuracyM ?: 0f)
         return null
     }
 

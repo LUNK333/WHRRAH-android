@@ -210,6 +210,12 @@ class DeltaTracker(
         state = DeltaState(elapsed, e, rate(), s, onTrack = true)
     }
 
+    /** Start the lap at [tMs] (the controller's launch-based start) — used when no start line is given. */
+    fun startAt(tMs: Double) { if (!finished) arm(tMs) }
+
+    /** Back to waiting (a start seen while pulling up to the stage). */
+    fun disarm() { if (!finished) { running = false; state = DeltaState(null, null, null, null, onTrack = true) } }
+
     private fun arm(tCrossMs: Double) {
         running = true; tStartMs = tCrossMs
         lastIdx = 0; sPrev = 0.0; ema = null; offSinceMs = null; rn = 0; rHead = 0

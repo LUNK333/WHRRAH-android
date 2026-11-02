@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import com.lunk333.whrrah.session.CONE_PENALTY_MS
 import androidx.compose.foundation.combinedClickable
@@ -456,8 +457,9 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
                                 LongPressButton("Continue walk", "long-press", Modifier.weight(1f), filled = false) { confirm = WalkConfirm.CONTINUE }
                         }
                     }
-                    TrackLineSummary("Start", s.start) { m, undo -> ctl.nudgeLine(true, m, undo) }
-                    TrackLineSummary("Finish", s.finish) { m, undo -> ctl.nudgeLine(false, m, undo) }
+                    TrackLineSummary("Start", s.start, onWidth = { ctl.setLineWidth(true, it) }) { m, undo -> ctl.nudgeLine(true, m, undo) }
+                    TrackLineSummary("Finish", s.finish, onWidth = { ctl.setLineWidth(false, it) }) { m, undo -> ctl.nudgeLine(false, m, undo) }
+                    TimingCalibration(ctl, s)
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Dot(Color(0xFFE53935))
@@ -484,8 +486,31 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
     }
 }
 
+/**
+ * How runs are timed, and the calibration against official times: the clock starts once the car has
+ * moved the session's start distance from its launch out of the stage; the offset fitted to the
+ * official times entered on runs is added to every time.
+ */
 @Composable
-private fun TrackLineSummary(label: String, l: TrackLine?, onNudge: (meters: Double, undo: Boolean) -> Unit) {
+private fun TimingCalibration(ctl: SessionController, s: Session) {
+    var msg by remember { mutableStateOf<String?>(null) }
+    val n = s.laps.count { it.officialTimeMs != null }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Timing: from the launch + %.1f m".format(s.startDistanceM) +
+            (if (s.timingOffsetMs != 0L) " · calibrated %+.3f s".format(s.timingOffsetMs / 1000.0) else " · not calibrated"),
+            style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { msg = ctl.calibrateToOfficial() }, enabled = n > 0) {
+                Text(if (n > 0) "Calibrate to $n official time${if (n == 1) "" else "s"}" else "Calibrate (enter official times first)")
+            }
+            if (s.timingOffsetMs != 0L) TextButton(onClick = { ctl.resetCalibration(); msg = "Calibration cleared" }) { Text("Clear") }
+        }
+        msg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+@Composable
+private fun TrackLineSummary(label: String, l: TrackLine?, onWidth: (Double) -> Unit, onNudge: (meters: Double, undo: Boolean) -> Unit) {
     Column {
         Text(
             "$label: " + when {
@@ -503,6 +528,12 @@ private fun TrackLineSummary(label: String, l: TrackLine?, onNudge: (meters: Dou
             Text("%+.0f m".format(l.nudgeM), style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = { onNudge(1.0, false) }) { Text("+ 1 m") }
             if (l.nudgeM != 0.0) TextButton(onClick = { onNudge(0.0, true) }) { Text("Undo nudges") }
+        }
+        // Width in place — a finish across a whole runway needs far more than the start.
+        if (l?.headingDeg != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { onWidth(l.widthM - (if (l.widthM > 15) 10.0 else 3.0) * Geo.FT) }) { Text("− width") }
+            Text("%.0f ft wide".format(l.widthM / Geo.FT), style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = { onWidth(l.widthM + (if (l.widthM >= 15) 10.0 else 3.0) * Geo.FT) }) { Text("+ width") }
         }
     }
 }
@@ -828,14 +859,19 @@ private fun DeltaStyleSetting(settings: AppSettings) {
 private fun LineWidthSetting(settings: AppSettings) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text("Start/finish line width", style = MaterialTheme.typography.titleSmall)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { settings.changeLineWidthFt(settings.lineWidthFt - 5) }) { Text("−5") }
-                Text("%.0f ft  (%.1f m)".format(settings.lineWidthFt, settings.lineWidthFt * Geo.FT),
-                    style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp))
-                OutlinedButton(onClick = { settings.changeLineWidthFt(settings.lineWidthFt + 5) }) { Text("+5") }
+            Text("Start / finish line width", style = MaterialTheme.typography.titleSmall)
+            for ((label, ft, set) in listOf(Triple("Start", settings.lineWidthFt, settings::changeLineWidthFt),
+                                            Triple("Finish", settings.finishLineWidthFt, settings::changeFinishLineWidthFt))) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, Modifier.width(56.dp))
+                    OutlinedButton(onClick = { set(ft - 5) }) { Text("−5") }
+                    Text("%.0f ft  (%.1f m)".format(ft, ft * Geo.FT),
+                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp))
+                    OutlinedButton(onClick = { set(ft + 5) }) { Text("+5") }
+                }
             }
-            Text("Applies to lines set from now on; reset a line to apply a new width to it.", style = MaterialTheme.typography.bodySmall)
+            Text("For lines set from now on. A session's own lines: change their width on the session's track card.",
+                style = MaterialTheme.typography.bodySmall)
         }
     }
 }

@@ -91,4 +91,65 @@ class LapTimerTest {
         g.writeText("elapsed_ms,utc_ms,lat,lon\n100,0,42.0,-71.5\n180,0,42.0001,-71.5\n")
         assertEquals(listOf(100L, 180L), LapTimer.readGpsCsv(g).map { it.tMs })
     }
+
+    /**
+     * A launch: stopped at [stopAtM] metres north of o (start line at 50 m) until t0+2 s, then
+     * 3 m/s² up to 20 m/s, on to the finish. 25 Hz, with speed. [creep]: first rolls over the start
+     * line from 40 m to 52 m while pulling up, then stops at [stopAtM].
+     */
+    private fun launchRun(stopAtM: Double, creep: Boolean = false): List<Fix> {
+        val out = ArrayList<Fix>()
+        var t = 0L; val t0 = 1_000_000L
+        fun at(d: Double, v: Double) = Geo.offset(o.lat, o.lon, 0.0, d).let { out.add(Fix(t0 + t, it.lat, it.lon, v)) }
+        if (creep) { var d = 40.0; while (d < 52.0) { at(d, 2.0); d += 2.0 * 0.04; t += 40 } }
+        while (t < (if (creep) 8000 else 2000)) { at(stopAtM, 0.0); t += 40 }
+        val tl = t
+        while (true) {
+            val tau = (t - tl) / 1000.0
+            val (d, v) = if (tau < 20.0 / 3) (stopAtM + 1.5 * tau * tau) to 3 * tau
+                         else (stopAtM + 20 * 20 / 6.0 + 20 * (tau - 20.0 / 3)) to 20.0
+            if (d > 480) break
+            at(d, v); t += 40
+        }
+        return out
+    }
+
+    /** Expected lap from the launch: start after [dist] m at 3 m/s², finish at 450 m. */
+    private fun expected(stopAtM: Double, dist: Double): Double {
+        val tStart = Math.sqrt(2 * dist / 3)
+        val dAcc = 20 * 20 / 6.0
+        val tFin = if (450 - stopAtM <= dAcc) Math.sqrt(2 * (450 - stopAtM) / 3) else 20.0 / 3 + (450 - stopAtM - dAcc) / 20
+        return (tFin - tStart) * 1000
+    }
+
+    @Test
+    fun startsFromTheLaunchOnceTheCarHasMovedTheStartDistance() {
+        val r = LapTimer.time(launchRun(46.0), start, finish, emptyList(), startDistanceM = 6.0)
+        assertNull(r.note)
+        assertEquals(expected(46.0, 6.0), r.lapTimeMs!!.toDouble(), 25.0)
+        // The calibration offset is added.
+        assertEquals(r.lapTimeMs!! + 57, LapTimer.time(launchRun(46.0), start, finish, emptyList(), 6.0, offsetMs = 57).lapTimeMs)
+    }
+
+    @Test
+    fun aCarStagedOverTheStartLineIsStillTimed() {
+        // Stopped 1 m past the start line: no crossing at the launch, but the launch still starts it.
+        val r = LapTimer.time(launchRun(51.0), start, finish, emptyList(), startDistanceM = 6.0)
+        assertEquals(expected(51.0, 6.0), r.lapTimeMs!!.toDouble(), 25.0)
+    }
+
+    @Test
+    fun rollingOverTheStartLineWhilePullingUpDoesNotStartIt() {
+        // Crosses the line at 50 m while pulling up, stops 2 m past it, then launches.
+        val r = LapTimer.time(launchRun(52.0, creep = true), start, finish, emptyList(), startDistanceM = 6.0)
+        assertEquals(expected(52.0, 6.0), r.lapTimeMs!!.toDouble(), 25.0)
+    }
+
+    @Test
+    fun withoutAStopInTheStageItFallsBackToTheStartLine() {
+        val rolling = drive(17.3, 40, 40.0, phaseMs = 13).map { it.copy(speedMps = 17.3) }
+        val r = LapTimer.time(rolling, start, finish, emptyList())
+        assertEquals(400 / 17.3 * 1000, r.lapTimeMs!!.toDouble(), 2.0)
+        assertEquals("timed from the start line (no stop in the stage found)", r.note)
+    }
 }

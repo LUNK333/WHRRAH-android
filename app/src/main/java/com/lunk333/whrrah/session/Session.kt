@@ -223,6 +223,10 @@ data class Session(
     val cameraClockOffsetMs: Long? = null,
     /** Clips taken out of the session by hand (test clips etc.): never matched to a run again. */
     val removedClips: List<String> = emptyList(),
+    /** Stage → start gate distance: the clock starts once the car has moved this far from its launch. */
+    val startDistanceM: Double = LapTimer.DEFAULT_START_DISTANCE_M,
+    /** Added to every lap time — fitted to the official times ("Calibrate"), 0 until then. */
+    val timingOffsetMs: Long = 0,
 ) {
     val trackDefined: Boolean get() = start?.headingDeg != null && finish?.headingDeg != null
     /** Best time with cone penalties, DNFs left out. */
@@ -238,6 +242,7 @@ data class Session(
         .putOpt("start", start?.toJson()).putOpt("finish", finish?.toJson()).putOpt("trackWalkFile", trackWalkFile)
         .putOpt("cameraClockOffsetMs", cameraClockOffsetMs)
         .put("removedClips", JSONArray(removedClips))
+        .put("startDistanceM", startDistanceM).put("timingOffsetMs", timingOffsetMs)
         .put("laps", JSONArray().apply { laps.forEach { put(it.toJson()) } })
 
     companion object {
@@ -253,6 +258,8 @@ data class Session(
             trackWalkFile = o.optStringOrNull("trackWalkFile"),
             cameraClockOffsetMs = o.optLongOrNull("cameraClockOffsetMs"),
             removedClips = o.optJSONArray("removedClips")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList(),
+            startDistanceM = o.optDouble("startDistanceM", LapTimer.DEFAULT_START_DISTANCE_M),
+            timingOffsetMs = o.optLong("timingOffsetMs", 0),
             laps = o.optJSONArray("laps")?.let { a -> List(a.length()) { Lap.fromJson(a.getJSONObject(it)) } } ?: emptyList(),
         )
 

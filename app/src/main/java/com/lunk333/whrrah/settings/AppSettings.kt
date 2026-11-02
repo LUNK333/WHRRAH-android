@@ -44,6 +44,14 @@ class AppSettings private constructor(context: Context) {
     /** Width of start/finish lines set from now on, in feet. */
     var lineWidthFt by mutableStateOf(prefs.getFloat("line_width_ft", DEFAULT_LINE_WIDTH_FT)); private set
 
+    /** Width of finish lines set from now on (finishes are often runway-wide), in feet. */
+    var finishLineWidthFt by mutableStateOf(prefs.getFloat("finish_line_width_ft", DEFAULT_FINISH_WIDTH_FT)); private set
+
+    fun changeFinishLineWidthFt(ft: Float) {
+        finishLineWidthFt = ft.coerceIn(MIN_LINE_WIDTH_FT, MAX_LINE_WIDTH_FT)
+        prefs.edit().putFloat("finish_line_width_ft", finishLineWidthFt).apply()
+    }
+
     fun changeLineWidthFt(ft: Float) {
         lineWidthFt = ft.coerceIn(MIN_LINE_WIDTH_FT, MAX_LINE_WIDTH_FT)
         prefs.edit().putFloat("line_width_ft", lineWidthFt).apply()
@@ -64,6 +72,7 @@ class AppSettings private constructor(context: Context) {
 
     companion object {
         const val DEFAULT_LINE_WIDTH_FT = 20f
+        const val DEFAULT_FINISH_WIDTH_FT = 100f
         const val MIN_LINE_WIDTH_FT = 5f
         const val MAX_LINE_WIDTH_FT = 200f
 

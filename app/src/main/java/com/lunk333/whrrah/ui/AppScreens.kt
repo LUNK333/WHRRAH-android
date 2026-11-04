@@ -451,8 +451,8 @@ private fun TrackCard(ctl: SessionController, s: Session, fix: GpsFix?, widthFt:
             if (open || recording) {
                 if (!recording) {
                     Text("Start recording at the beginning of the course walk, then set the start and finish lines " +
-                        "as you reach them. Lines are %.0f ft wide (Settings), across your direction of travel. ".format(widthFt) +
-                        "To match official timing, nudge a line along the course: + is further down the course, − is back.",
+                        "as you reach them. New start lines are %.0f ft wide and finish lines %.0f ft (Settings), across your direction of travel; ".format(widthFt, AppSettings.get(LocalContext.current).finishLineWidthFt) +
+                        "change a line's width below. Times line up with official timing once you calibrate to a few official times.",
                         style = MaterialTheme.typography.bodySmall)
                     if (s.trackWalkFile == null && !s.trackDefined)
                         Button(onClick = { error = null; ctl.startTrackWalk(append = false) }, Modifier.fillMaxWidth().height(56.dp)) { Text("Record track walk") }

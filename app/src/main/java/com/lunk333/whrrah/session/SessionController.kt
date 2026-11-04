@@ -351,7 +351,7 @@ class SessionController private constructor(context: Context) {
         val lap = Lap(n = (s.laps.maxOfOrNull { it.n } ?: 0) + 1, recStartWallMs = wallMs, manual = manual)
         update(s.copy(laps = s.laps + lap))
         liveStartElapsedMs = null; liveLapMs = null; liveLastFix = null
-        liveStageT = null; liveDist = 0.0; liveRunT = null
+        liveStageT = null; liveDist = 0.0; liveRunT = null; liveLastV = null
         startDelta(s)
         openGpsLog(lap.n)
         activity = "Run ${lap.n} recording — logging ${gps.name}"
@@ -691,6 +691,7 @@ class SessionController private constructor(context: Context) {
     private var liveStageT: Double? = null
     private var liveDist = 0.0
     private var liveRunT: Double? = null
+    private var liveLastV: Double? = null
 
     private fun fixT(f: GpsFix) = (if (f.utcMs > 0) f.utcMs else f.elapsedMs).toDouble()
 
@@ -707,15 +708,21 @@ class SessionController private constructor(context: Context) {
         if (currentRun == null || prev == null || liveLapMs != null) return
         val st = s.start ?: return
         val tNow = fixT(fix); val tPrev = fixT(prev)
-        val v = fix.speedMps?.toDouble()
-        if (v != null && v < LapTimer.STOP_MPS && LapTimer.inStage(LapTimer.Fix(tNow.toLong(), fix.lat, fix.lon), st)) {
+        // Speed: the receiver's, unless it's missing or plainly wrong (0 while the position is moving
+        // — some GPS sources do that); then from the position change.
+        val dtS = (tNow - tPrev) / 1000
+        val vPos = if (dtS > 0) com.lunk333.whrrah.gps.Geo.distance(prev.lat, prev.lon, fix.lat, fix.lon) / dtS else 0.0
+        val vRep = fix.speedMps?.toDouble()
+        val v = if (vRep == null || (vRep < 0.5 && vPos > 3.0)) vPos else vRep
+        val pv = liveLastV ?: v
+        liveLastV = v
+        if (v < LapTimer.STOP_MPS && LapTimer.inStage(LapTimer.Fix(tNow.toLong(), fix.lat, fix.lon), st)) {
             liveStageT = tNow; liveDist = 0.0
             if (liveRunT != null) { liveRunT = null; liveStartElapsedMs = null; deltaTracker?.disarm() }
             return
         }
         if (liveRunT == null) {
-            val pv = prev.speedMps?.toDouble()
-            if (liveStageT != null && v != null && pv != null) {
+            if (liveStageT != null) {
                 val ds = (pv + v) / 2 * (tNow - tPrev) / 1000
                 if (liveDist + ds >= s.startDistanceM) {
                     val k = if (ds > 0) (s.startDistanceM - liveDist) / ds else 1.0

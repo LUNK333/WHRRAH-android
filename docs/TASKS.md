@@ -89,7 +89,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 | B3e | Define the BLE protocol ESP32 → phone (one GATT service, packed binary frames with ESP32 timestamp + channel ID + value). Write it down in `docs/` | any | TODO | |
 | B3f | Firmware: decode + send over BLE notify | any | TODO | |
 | B3g | Test BLE side with nRF Connect before writing any app code | desk | TODO | |
-| B3h | Android: ESP32 BLE client (reuse B2e connection service) | any | TODO | |
+| B3h | Android: ESP32 BLE client (reuse B2e connection service) | any | DOING | desk |
 | B3i | Bench test with a second CAN device / replay of B3c capture, then car test | car | TODO | |
 
 ### B4 — ELM327 + EDIABAS (brake pressure)
@@ -163,6 +163,7 @@ Data path proven in Python (`WHRRAH/wifi_gyro_sync/`). Now port to Android.
 ## Session log
 
 Newest at top. One line per session: date · machine · task IDs · what changed / what's next.
+- 2026-11-07 · desk · B3h · Dev options → ESP32 CAN logger test (branch `esp32-ble-panel`): BLE client for protocol v1 (WHRRAH-esp32 `docs/ble-protocol.md`) — scan by name/service, MTU 247, INFO, STATUS (auto every 2 s), PING ×N → best-RTT clock offset + record latency, stream flags, raw ID filter, per-ID frame table (count, Hz, changed bytes), decoded channels, seq-gap loss, CSV log. Parser unit-tested; **not yet tried against a board** (fake build `esp32dev_fake` is the first test). Not wired into sessions yet.
 - 2026-11-01 · desk · L3/L6 · NE-SVT #16 review: finish misses = 20 ft finish line (cars crossed 3.2–3.7 m off centre); false/missed starts = staging over the start line. New timing: start = launch from the last stop in the stage + start distance (6 m default; RaceBox IMU refines the launch), finish = line crossing; calibrate offset to official times (run menu). On NE-SVT: ±0.043 s sd vs official (was 0.36). Line width editable in place; finish default 100 ft. Live timer + delta use the same launch rule.
 - 2026-10-31 · desk · M5, L6, G · Run viewer: download (swipe right) / delete copy (swipe left) / export (long press, overlay + padded, to the gallery). Landscape timer: panel states, delta bar style (chevrons/boxes), full brightness, HDR chevrons (Dev). Export verified on the phone with a local clip; next: export straight from the camera's WiFi.
 - 2026-10-30 · desk · L6 · Live lap delta per docs/lap-delta-spec.md, adapted to autocross (separate start/finish, open course): reference = fastest gap-free timed run, picked at run start; projection window + 15 m lateral limit + reacquire. Replay of LAPTIMING TEST vs run 4: final deltas match lap differences to <0.3 ms, ~1–5 µs/fix. Landscape panel: 10+10 chevron bar (0.2 s each), red left = behind, green right = ahead, number in the middle. Next: try it in the car.

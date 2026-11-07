@@ -81,7 +81,7 @@ object UiChrome {
     var immersive by mutableStateOf(false)
 }
 
-enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, BROWSE_DOWNLOADS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY, DEV_HDR }
+enum class Screen { HOME, NEW_SESSION, OPEN_SESSION, SESSION, VIEW_RUNS, BROWSE_DOWNLOADS, SETTINGS, DEV, DEV_CAMERA, DEV_RACEBOX, DEV_DATA, DEV_OVERLAY, DEV_HDR, DEV_ESP32 }
 
 /** Whole app: a back stack of [Screen]s. [legacyData] is the old CSV/XRK viewer, kept under Dev options. */
 @Composable
@@ -117,12 +117,13 @@ fun WhrrahApp(modifier: Modifier = Modifier, legacyData: @Composable (Modifier) 
             Screen.VIEW_RUNS -> RunViewerScreen(m)
             Screen.BROWSE_DOWNLOADS -> BrowseDownloadsScreen(m)
             Screen.SETTINGS -> SettingsScreen(m)
-            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) }, onOverlay = { go(Screen.DEV_OVERLAY) }, onHdr = { go(Screen.DEV_HDR) })
+            Screen.DEV -> DevScreen(m, onCamera = { go(Screen.DEV_CAMERA) }, onRaceBox = { go(Screen.DEV_RACEBOX) }, onData = { go(Screen.DEV_DATA) }, onOverlay = { go(Screen.DEV_OVERLAY) }, onHdr = { go(Screen.DEV_HDR) }, onEsp32 = { go(Screen.DEV_ESP32) })
             Screen.DEV_RACEBOX -> com.lunk333.whrrah.racebox.RaceBoxScreen(m)
             Screen.DEV_CAMERA -> CameraScreen(m)
             Screen.DEV_DATA -> legacyData(m)
             Screen.DEV_OVERLAY -> OverlayPreviewScreen(m)
             Screen.DEV_HDR -> HdrTestScreen(m)
+            Screen.DEV_ESP32 -> com.lunk333.whrrah.esp32.CanLinkScreen(m)
         }
     }
 }
@@ -139,6 +140,7 @@ private fun title(s: Screen) = when (s) {
     Screen.DEV_DATA -> "CSV / XRK viewer (legacy)"
     Screen.DEV_OVERLAY -> "Overlay preview"
     Screen.DEV_HDR -> "HDR chevron test"
+    Screen.DEV_ESP32 -> "ESP32 CAN logger test"
     Screen.VIEW_RUNS -> "View runs"
     Screen.BROWSE_DOWNLOADS -> "Downloaded runs"
 }
@@ -842,10 +844,11 @@ private fun EditableList(title: String, values: List<String>, onAdd: (String) ->
 }
 
 @Composable
-private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () -> Unit, onData: () -> Unit, onOverlay: () -> Unit, onHdr: () -> Unit) {
+private fun DevScreen(modifier: Modifier, onCamera: () -> Unit, onRaceBox: () -> Unit, onData: () -> Unit, onOverlay: () -> Unit, onHdr: () -> Unit, onEsp32: () -> Unit) {
     Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onCamera, modifier = Modifier.fillMaxWidth()) { Text("Camera test bench (pair, clips, gyro, loop tests)") }
         Button(onClick = onRaceBox, modifier = Modifier.fillMaxWidth()) { Text("RaceBox test panel (connect, live data, CSV log)") }
+        Button(onClick = onEsp32, modifier = Modifier.fillMaxWidth()) { Text("ESP32 CAN logger test (BLE link, status, frames)") }
         Button(onClick = onOverlay, modifier = Modifier.fillMaxWidth()) { Text("Overlay preview (layout + a saved run, no video)") }
         Button(onClick = onHdr, modifier = Modifier.fillMaxWidth()) { Text("HDR chevron test (brighter delta bar)") }
         OutlinedButton(onClick = onData, modifier = Modifier.fillMaxWidth()) { Text("CSV / XRK viewer (legacy)") }
